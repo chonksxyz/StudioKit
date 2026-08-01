@@ -1,0 +1,56 @@
+{
+  "name": "@chonksxyz/studio",
+  "version": "0.1.0",
+  "description": "A dependency-free toolkit for building pixel art studios: configurable grids, undo/redo history, draw and erase input, configurable keyboard shortcuts, image export, and design persistence.",
+  "license": "MIT",
+  "author": "Chonks (https://www.chonks.xyz)",
+  "homepage": "https://github.com/chonksxyz/StudioKit#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chonksxyz/StudioKit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chonksxyz/StudioKit/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./src/*": "./src/*"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "prepublishOnly": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "tsx": "^4.19.2",
+    "typescript": "^6.0.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "pixel-art",
+    "editor",
+    "drawing",
+    "canvas",
+    "grid",
+    "undo",
+    "keyboard-shortcuts"
+  ]
+}
