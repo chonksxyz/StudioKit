@@ -209,15 +209,6 @@ store.remove(0);
 
 Corrupt payloads load as `[]` instead of throwing, and invalid records are dropped one by one rather than poisoning the whole list.
 
-## First consumer: Chonks
-
-Chonks Studio (a 30×30 trait editor for an on-chain NFT project) runs on Studio. Its integration in the [Chonks repo](https://github.com/backseats/chonks) is a good reference for a production consumer:
-
-- [`lib/studio/studioDocument.ts`](https://github.com/backseats/chonks/blob/chonks-2.0/lib/studio/studioDocument.ts) — pins the document to 30×30 and re-exports the reducer
-- [`lib/studio/studioInput.ts`](https://github.com/backseats/chonks/blob/chonks-2.0/lib/studio/studioInput.ts) — declares the Chonks shortcut map (`d`raw, `e`rase, `z`oom, `/` help, `f`ile menu, …) over `bindStudioInput`
-- [`lib/studio/colorMapDocument.ts`](https://github.com/backseats/chonks/blob/chonks-2.0/lib/studio/colorMapDocument.ts) — layers Chonks' on-chain `XXYYRRGGBB` colorMap encoding on top of Studio's grid helpers
-- [`lib/studio/savedDesignStore.ts`](https://github.com/backseats/chonks/blob/chonks-2.0/lib/studio/savedDesignStore.ts) — configures `createDesignStore` with Chonks' record format and legacy-key migration
-
 ## Testing
 
 Studio's tests run in Node via `node:test`:
