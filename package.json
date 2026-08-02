@@ -18,7 +18,8 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./src/*": "./src/*"
   },
@@ -34,7 +35,8 @@
     "build": "tsc -p tsconfig.build.json",
     "test": "node --import tsx --test tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "prepublishOnly": "tsc -p tsconfig.build.json"
+    "prepublishOnly": "tsc -p tsconfig.build.json",
+    "prepare": "tsc -p tsconfig.build.json"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
