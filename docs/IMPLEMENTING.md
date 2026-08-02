@@ -4,7 +4,7 @@ This guide walks through building an editor on Studio from scratch: state, DOM c
 
 ## 1. Pick your grid and create the document
 
-A grid is `(string | null)[][]` — row-major, hex color strings for painted cells, `null` for empty. Any rectangular dimensions work; the document adopts the dimensions of its initial grid and rejects mismatched grids from then on.
+A grid is `(string | null)[][]` — row-major, valid CSS color strings for painted cells, `null` for empty. Studio does not validate colors. Any rectangular dimensions work; the document adopts the dimensions of its initial grid and rejects mismatched grids from then on.
 
 ```ts
 import { createGrid, createStudioDocument } from "@chonksxyz/studio";
@@ -81,7 +81,7 @@ const binding = bindStudioInput({
   getPolicy: () => ({
     overlay: openOverlay,      // "none", or the name of whatever menu/modal is open
     mode,                      // "draw" | "erase"
-    selectedColor,             // current hex color
+    selectedColor,             // current CSS color
   }),
   actions: {
     beginStroke: (row, column, color) => dispatch({ type: "begin-stroke", row, column, color }),

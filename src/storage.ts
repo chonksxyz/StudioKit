@@ -54,7 +54,7 @@ export function createDesignStore<Design>({
       if (legacy === null) continue;
 
       const migrated = parse(legacy);
-      if (migrated === null) return [];
+      if (migrated === null) continue;
       write(migrated);
       return migrated;
     }

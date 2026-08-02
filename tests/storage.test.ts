@@ -77,6 +77,26 @@ test("migrates legacy keys and strips fields the normalizer drops", () => {
   );
 });
 
+test("skips malformed legacy payloads and migrates the next valid key", () => {
+  const storage = createMemoryStorage({
+    "studio:broken": "not-json",
+    "studio:older": JSON.stringify([{ pixels: "abc" }]),
+  });
+  const store = createDesignStore<Design>({
+    storage,
+    key: "studio:v1",
+    legacyKeys: ["studio:broken", "studio:older"],
+    normalize: normalizeDesign,
+    isEqual: (left, right) => left.pixels === right.pixels,
+  });
+
+  assert.deepEqual(store.load(), [{ pixels: "abc" }]);
+  assert.equal(
+    storage.values.get("studio:v1"),
+    JSON.stringify([{ pixels: "abc" }]),
+  );
+});
+
 test("ignores corrupt payloads without falling through to legacy data", () => {
   const storage = createMemoryStorage({
     "studio:v1": "not-json",

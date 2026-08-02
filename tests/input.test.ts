@@ -35,6 +35,7 @@ class FakeEventTarget {
 
 class FakeGrid extends FakeEventTarget {
   readonly cells = new Set<object>();
+  captureError: Error | null = null;
   private readonly pointerTypes = new Map<number, string>();
   private readonly capturedPointers = new Set<number>();
 
@@ -52,6 +53,7 @@ class FakeGrid extends FakeEventTarget {
 
   setPointerCapture(pointerId: number) {
     this.capturedPointers.add(pointerId);
+    if (this.captureError) throw this.captureError;
   }
 
   hasPointerCapture(pointerId: number) {
@@ -93,7 +95,7 @@ function createActions(
 
 function keyboardEvent(
   key: string,
-  target: { tagName: string },
+  target: object,
   overrides: Partial<KeyboardEvent> = {},
 ): KeyboardEvent {
   return {
@@ -246,6 +248,30 @@ test("keeps shortcuts native inside editable targets and system shortcuts", () =
 
   assert.deepEqual(calls, ["save", "undo", "redo"]);
   assert.equal(prevented, 3);
+  binding.destroy();
+});
+
+test("ignores nested contenteditable and in-progress IME keyboard events", () => {
+  const windowTarget = new FakeEventTarget();
+  const calls: string[] = [];
+  const binding = bind({
+    windowTarget,
+    shortcuts: [{ key: "s", run: () => calls.push("save") }],
+  });
+  const body = { tagName: "BODY" };
+  const contenteditableChild = {
+    tagName: "SPAN",
+    closest: () => ({}) as Element,
+  };
+
+  windowTarget.emit("keydown", keyboardEvent("s", contenteditableChild));
+  windowTarget.emit(
+    "keydown",
+    keyboardEvent("s", body, { isComposing: true }),
+  );
+  windowTarget.emit("keydown", keyboardEvent("s", body, { keyCode: 229 }));
+
+  assert.deepEqual(calls, []);
   binding.destroy();
 });
 
@@ -407,6 +433,38 @@ test("recovers a pinch after two touch points start at the same position", () =>
   binding.destroy();
 });
 
+test("resets pinch distance when touch membership changes", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const target = cell(1, 2);
+  grid.cells.add(target);
+  const factors: number[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    actions: {
+      applyPinchScale: (factor) => factors.push(factor),
+    },
+  });
+  const touch = (pointerId: number, clientX: number) =>
+    pointerEvent(target, {
+      pointerId,
+      pointerType: "touch",
+      clientX,
+      clientY: 0,
+    });
+
+  grid.emit("pointerdown", touch(1, 0));
+  grid.emit("pointerdown", touch(2, 10));
+  grid.emit("pointerdown", touch(3, 100));
+  windowTarget.emit("pointerup", touch(1, 0));
+  grid.emit("pointermove", touch(3, 110));
+
+  assert.equal(factors.length, 1);
+  assert.ok(Math.abs(factors[0] - 100 / 90) < Number.EPSILON);
+  binding.destroy();
+});
+
 test("cancels an active stroke when pointer capture is lost unexpectedly", () => {
   const grid = new FakeGrid();
   const target = cell(1, 2);
@@ -425,6 +483,33 @@ test("cancels an active stroke when pointer capture is lost unexpectedly", () =>
   grid.emit("lostpointercapture", pointerEvent(grid));
 
   assert.deepEqual(calls, ["begin", "cancel"]);
+  binding.destroy();
+});
+
+test("removes a touch whose pointer capture is lost unexpectedly", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const target = cell(1, 2);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    actions: {
+      beginStroke: () => calls.push("begin"),
+      commitStroke: () => calls.push("commit"),
+      cancelStroke: () => calls.push("cancel"),
+    },
+  });
+  const touch = (pointerId: number) =>
+    pointerEvent(target, { pointerId, pointerType: "touch" });
+
+  grid.emit("pointerdown", touch(1));
+  grid.emit("lostpointercapture", touch(1));
+  grid.emit("pointerdown", touch(2));
+  windowTarget.emit("pointerup", touch(2));
+
+  assert.deepEqual(calls, ["begin", "cancel", "begin", "commit"]);
   binding.destroy();
 });
 
@@ -545,6 +630,157 @@ test("releases pointer state when a stroke completion callback throws", () => {
 
   assert.deepEqual(eraseStates, [true, false]);
   assert.equal(grid.hasPointerCapture(1), false);
+  binding.destroy();
+});
+
+test("rolls back pointer state when temporary erase setup throws", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const target = cell(4, 5);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  let failEraseSetup = true;
+  const binding = bind({
+    grid,
+    windowTarget,
+    actions: {
+      beginStroke: () => calls.push("begin"),
+      commitStroke: () => calls.push("commit"),
+      onTemporaryEraseChange: (active) => {
+        calls.push(`erase:${active}`);
+        if (active && failEraseSetup) {
+          failEraseSetup = false;
+          throw new Error("erase setup failed");
+        }
+      },
+    },
+  });
+
+  assert.throws(
+    () =>
+      grid.emit(
+        "pointerdown",
+        pointerEvent(target, { button: 2, buttons: 2 }),
+      ),
+    /erase setup failed/,
+  );
+  assert.equal(grid.hasPointerCapture(1), false);
+  windowTarget.emit("pointerup", pointerEvent(grid, { buttons: 0 }));
+  grid.emit("pointerdown", pointerEvent(target, { pointerId: 2 }));
+  windowTarget.emit(
+    "pointerup",
+    pointerEvent(grid, { pointerId: 2, buttons: 0 }),
+  );
+
+  assert.deepEqual(calls, ["erase:true", "erase:false", "begin", "commit"]);
+  binding.destroy();
+});
+
+test("rolls back pointer state when capture setup throws", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const target = cell(4, 5);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    actions: {
+      beginStroke: () => calls.push("begin"),
+      commitStroke: () => calls.push("commit"),
+    },
+  });
+  grid.captureError = new Error("capture failed");
+
+  assert.throws(
+    () => grid.emit("pointerdown", pointerEvent(target)),
+    /capture failed/,
+  );
+  assert.equal(grid.hasPointerCapture(1), false);
+  windowTarget.emit("pointerup", pointerEvent(grid, { buttons: 0 }));
+  grid.captureError = null;
+  grid.emit("pointerdown", pointerEvent(target, { pointerId: 2 }));
+  windowTarget.emit(
+    "pointerup",
+    pointerEvent(grid, { pointerId: 2, buttons: 0 }),
+  );
+
+  assert.deepEqual(calls, ["begin", "commit"]);
+  binding.destroy();
+});
+
+test("preserves a stroke-start error while rolling back partial actions", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const target = cell(4, 5);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  let failStrokeStart = true;
+  const binding = bind({
+    grid,
+    windowTarget,
+    actions: {
+      beginStroke: () => {
+        calls.push("begin");
+        if (failStrokeStart) {
+          failStrokeStart = false;
+          throw new Error("begin failed");
+        }
+      },
+      cancelStroke: () => {
+        calls.push("cancel");
+        throw new Error("cleanup failed");
+      },
+      commitStroke: () => calls.push("commit"),
+    },
+  });
+
+  assert.throws(
+    () => grid.emit("pointerdown", pointerEvent(target)),
+    /begin failed/,
+  );
+  assert.equal(grid.hasPointerCapture(1), false);
+  windowTarget.emit("pointerup", pointerEvent(grid, { buttons: 0 }));
+  grid.emit("pointerdown", pointerEvent(target, { pointerId: 2 }));
+  windowTarget.emit(
+    "pointerup",
+    pointerEvent(grid, { pointerId: 2, buttons: 0 }),
+  );
+
+  assert.deepEqual(calls, ["begin", "cancel", "begin", "commit"]);
+  binding.destroy();
+});
+
+test("cancels active strokes when the tab hides or an overlay opens", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const documentTarget = new FakeDocument();
+  const target = cell(4, 5);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  let overlay = "none";
+  const binding = bind({
+    grid,
+    windowTarget,
+    documentTarget,
+    overlay: () => overlay,
+    actions: {
+      beginStroke: () => calls.push("begin"),
+      cancelStroke: () => calls.push("cancel"),
+    },
+  });
+
+  grid.emit("pointerdown", pointerEvent(target));
+  documentTarget.visibilityState = "hidden";
+  documentTarget.emit("visibilitychange", {} as Event);
+  documentTarget.visibilityState = "visible";
+  grid.emit("pointerdown", pointerEvent(target, { pointerId: 2 }));
+  overlay = "menu";
+  binding.syncPolicy();
+
+  assert.deepEqual(calls, ["begin", "cancel", "begin", "cancel"]);
+  assert.equal(grid.hasPointerCapture(1), false);
+  assert.equal(grid.hasPointerCapture(2), false);
   binding.destroy();
 });
 

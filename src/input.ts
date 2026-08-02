@@ -159,7 +159,20 @@ export function bindStudioInput({
     if (wasActive !== isActive) actions.onTemporaryEraseChange?.(isActive);
   };
 
-  const finishStroke = (commit: boolean) => {
+  const removeTouchPointer = (event: PointerEvent) => {
+    if (event.pointerType !== "touch") return false;
+    if (!touchPointers.delete(event.pointerId)) return false;
+    pinchDistance = currentPinchDistance();
+    return true;
+  };
+
+  const releasePointerCapture = (pointerId: number) => {
+    if (grid.hasPointerCapture?.(pointerId)) {
+      grid.releasePointerCapture(pointerId);
+    }
+  };
+
+  const finishStroke = (commit: boolean, releaseCapture = true) => {
     if (activeStrokePointer === null) return;
     const pointerId = activeStrokePointer;
     activeStrokePointer = null;
@@ -170,9 +183,27 @@ export function bindStudioInput({
       try {
         setEraseModifiers(shiftErase, false);
       } finally {
-        if (grid.hasPointerCapture?.(pointerId)) grid.releasePointerCapture(pointerId);
+        if (releaseCapture) releasePointerCapture(pointerId);
       }
     }
+  };
+
+  const rollbackStrokeStart = (event: PointerEvent, strokeBegan: boolean) => {
+    activeStrokePointer = null;
+    removeTouchPointer(event);
+
+    // Cleanup failures must not replace the error that aborted pointer startup.
+    if (strokeBegan) {
+      try {
+        actions.cancelStroke();
+      } catch {}
+    }
+    try {
+      setEraseModifiers(shiftErase, false);
+    } catch {}
+    try {
+      releasePointerCapture(event.pointerId);
+    } catch {}
   };
 
   const handlePointerDown = (event: PointerEvent) => {
@@ -180,7 +211,7 @@ export function bindStudioInput({
     if (event.pointerType === "touch") {
       touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (touchPointers.size >= 2) {
-        finishStroke(false);
+        finishStroke(false, false);
         pinchDistance = currentPinchDistance();
         event.preventDefault();
         return;
@@ -193,13 +224,17 @@ export function bindStudioInput({
 
     event.preventDefault();
     activeStrokePointer = event.pointerId;
-    setEraseModifiers(shiftErase, event.button === 2);
-    grid.setPointerCapture?.(event.pointerId);
-    actions.beginStroke(
-      coordinates.row,
-      coordinates.column,
-      strokeColor(),
-    );
+    let strokeBegan = false;
+    try {
+      setEraseModifiers(shiftErase, event.button === 2);
+      grid.setPointerCapture?.(event.pointerId);
+      const color = strokeColor();
+      strokeBegan = true;
+      actions.beginStroke(coordinates.row, coordinates.column, color);
+    } catch (error) {
+      rollbackStrokeStart(event, strokeBegan);
+      throw error;
+    }
   };
 
   const handlePointerMove = (event: PointerEvent) => {
@@ -232,24 +267,20 @@ export function bindStudioInput({
     );
   };
 
-  const removeTouchPointer = (event: PointerEvent) => {
-    if (event.pointerType === "touch") {
-      touchPointers.delete(event.pointerId);
-      if (touchPointers.size < 2) pinchDistance = null;
-    }
-  };
-
   const handlePointerUp = (event: PointerEvent) => {
-    removeTouchPointer(event);
+    const removedTouch = removeTouchPointer(event);
     if (event.pointerId === activeStrokePointer) finishStroke(true);
+    else if (removedTouch) releasePointerCapture(event.pointerId);
   };
 
   const handlePointerCancel = (event: PointerEvent) => {
-    removeTouchPointer(event);
+    const removedTouch = removeTouchPointer(event);
     if (event.pointerId === activeStrokePointer) finishStroke(false);
+    else if (removedTouch) releasePointerCapture(event.pointerId);
   };
 
   const handleLostPointerCapture = (event: PointerEvent) => {
+    removeTouchPointer(event);
     if (event.pointerId === activeStrokePointer) finishStroke(false);
   };
 

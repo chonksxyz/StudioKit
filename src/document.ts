@@ -109,7 +109,7 @@ function commitAtomicEdit(
   nextGrid: StudioGrid,
 ): StudioDocumentState {
   const baseline = committedGrid(state);
-  if (gridsEqual(baseline, nextGrid)) {
+  if (baseline === nextGrid || gridsEqual(baseline, nextGrid)) {
     return state.stroke === null
       ? state
       : { ...state, grid: baseline, stroke: null };
@@ -249,10 +249,18 @@ export function studioDocumentReducer(
       return commitAtomicEdit(state, createGrid(getGridSize(state.grid)));
     case "recolor": {
       const baseline = committedGrid(state);
+      if (action.from === action.to) {
+        return commitAtomicEdit(state, baseline);
+      }
+      let changed = false;
       const grid = baseline.map((row) =>
-        row.map((color) => (color === action.from ? action.to : color)),
+        row.map((color) => {
+          if (color !== action.from) return color;
+          changed = true;
+          return action.to;
+        }),
       );
-      return commitAtomicEdit(state, grid);
+      return commitAtomicEdit(state, changed ? grid : baseline);
     }
     case "load": {
       const grid = tryCloneMatchingGrid(state, action.grid);
@@ -289,6 +297,7 @@ export function studioDocumentReducer(
       };
     }
     default:
+      action satisfies never;
       return state;
   }
 }

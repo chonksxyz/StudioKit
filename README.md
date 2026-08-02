@@ -9,7 +9,7 @@ Studio was extracted from [Chonks Studio](https://www.chonks.xyz/studio), the pi
 ## Features
 
 - **Zero dependencies.** Plain TypeScript. No React, no canvas library, no build-time magic. Works with React, Vue, Svelte, or vanilla DOM.
-- **A grid you define.** Any rectangular dimensions — 16×16, 30×30, 64×32. Cells are hex color strings or `null` (empty).
+- **A grid you define.** Any rectangular dimensions — 16×16, 30×30, 64×32. Cells are valid CSS color strings or `null` (empty).
 - **History built in.** A pure reducer models the document: every brush stroke commits as exactly one undo entry, cancelled strokes roll back cleanly, and atomic edits (clear, recolor, load, affix) are each one history step.
 - **Draw and erase.** Pointer gestures with pointer capture: left-click paints, right-click erases, holding Shift erases, two-finger touch becomes pinch-to-zoom. Gestures cancel safely on blur, tab-hide, and unmount.
 - **Keyboard shortcuts you configure.** Declare your own key map, scope shortcuts to overlays (menus, modals), and Studio handles the rest: undo/redo on `⌘Z`/`⌘⇧Z`, staying out of the way while the user types in a text field, and never shadowing system shortcuts like paste.

@@ -155,6 +155,27 @@ test("clear, recolor, load, and affix are atomic and undoable", () => {
   );
 });
 
+test("avoids allocating history for no-op recolors", () => {
+  const initial = createStudioDocument(gridWith([0, 0, "#111111"]));
+
+  assert.equal(
+    studioDocumentReducer(initial, {
+      type: "recolor",
+      from: "#222222",
+      to: "#333333",
+    }),
+    initial,
+  );
+  assert.equal(
+    studioDocumentReducer(initial, {
+      type: "recolor",
+      from: "#111111",
+      to: "#111111",
+    }),
+    initial,
+  );
+});
+
 test("hydrates only pristine documents and clones incoming grids", () => {
   const hydrationInput = gridWith([3, 3, "#111111"]);
   const hydrated = studioDocumentReducer(
