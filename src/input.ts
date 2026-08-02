@@ -21,8 +21,7 @@ export type StudioInputActions = {
   cancelStroke: () => void;
   undo: () => void;
   redo: () => void;
-  onShiftEraseChange?: (active: boolean) => void;
-  onRightClickEraseChange?: (active: boolean) => void;
+  onTemporaryEraseChange?: (active: boolean) => void;
   applyPinchScale?: (factor: number) => void;
 };
 
@@ -46,6 +45,7 @@ export type BindStudioInputOptions = {
 const CLOSED_OVERLAY = "none";
 const DEFAULT_CELL_SELECTOR = "[data-row][data-col]";
 const DEFAULT_SHORTCUT_OVERLAYS: readonly string[] = [CLOSED_OVERLAY];
+const GRID_COORDINATE_PATTERN = /^\d+$/;
 
 type EditableTarget = {
   tagName?: string;
@@ -86,6 +86,15 @@ export function bindStudioInput({
   windowTarget = globalThis.window,
   documentTarget = globalThis.document,
 }: BindStudioInputOptions): StudioInputBinding {
+  if (
+    !Number.isInteger(rows) ||
+    !Number.isInteger(columns) ||
+    rows <= 0 ||
+    columns <= 0
+  ) {
+    throw new Error("Studio input grid must use positive integer dimensions");
+  }
+
   let activeStrokePointer: number | null = null;
   let shiftErase = false;
   let rightClickErase = false;
@@ -93,7 +102,9 @@ export function bindStudioInput({
   let pinchDistance: number | null = null;
 
   const currentPinchDistance = () => {
-    const [first, second] = Array.from(touchPointers.values());
+    const pointers = touchPointers.values();
+    const first = pointers.next().value;
+    const second = pointers.next().value;
     if (!first || !second) return null;
     return Math.hypot(first.x - second.x, first.y - second.y);
   };
@@ -104,8 +115,19 @@ export function bindStudioInput({
     } | null;
     const cell = candidate?.closest?.(cellSelector);
     if (!cell || !grid.contains(cell)) return null;
-    const row = Number(cell.dataset.row);
-    const column = Number(cell.dataset.col);
+    const rowValue = cell.dataset.row;
+    const columnValue = cell.dataset.col;
+    if (
+      !rowValue ||
+      !columnValue ||
+      !GRID_COORDINATE_PATTERN.test(rowValue) ||
+      !GRID_COORDINATE_PATTERN.test(columnValue)
+    ) {
+      return null;
+    }
+
+    const row = Number(rowValue);
+    const column = Number(columnValue);
     if (
       !Number.isInteger(row) ||
       !Number.isInteger(column) ||
@@ -126,22 +148,31 @@ export function bindStudioInput({
       : policy.selectedColor;
   };
 
-  const resetEraseModifiers = () => {
-    if (rightClickErase) actions.onRightClickEraseChange?.(false);
-    if (shiftErase) actions.onShiftEraseChange?.(false);
-    rightClickErase = false;
-    shiftErase = false;
+  const setEraseModifiers = (
+    nextShiftErase: boolean,
+    nextRightClickErase: boolean,
+  ) => {
+    const wasActive = rightClickErase || shiftErase;
+    shiftErase = nextShiftErase;
+    rightClickErase = nextRightClickErase;
+    const isActive = rightClickErase || shiftErase;
+    if (wasActive !== isActive) actions.onTemporaryEraseChange?.(isActive);
   };
 
   const finishStroke = (commit: boolean) => {
     if (activeStrokePointer === null) return;
     const pointerId = activeStrokePointer;
     activeStrokePointer = null;
-    if (commit) actions.commitStroke();
-    else actions.cancelStroke();
-    if (rightClickErase) actions.onRightClickEraseChange?.(false);
-    rightClickErase = false;
-    if (grid.hasPointerCapture?.(pointerId)) grid.releasePointerCapture(pointerId);
+    try {
+      if (commit) actions.commitStroke();
+      else actions.cancelStroke();
+    } finally {
+      try {
+        setEraseModifiers(shiftErase, false);
+      } finally {
+        if (grid.hasPointerCapture?.(pointerId)) grid.releasePointerCapture(pointerId);
+      }
+    }
   };
 
   const handlePointerDown = (event: PointerEvent) => {
@@ -162,13 +193,12 @@ export function bindStudioInput({
 
     event.preventDefault();
     activeStrokePointer = event.pointerId;
-    rightClickErase = event.button === 2;
-    if (rightClickErase) actions.onRightClickEraseChange?.(true);
+    setEraseModifiers(shiftErase, event.button === 2);
     grid.setPointerCapture?.(event.pointerId);
     actions.beginStroke(
       coordinates.row,
       coordinates.column,
-      strokeColor(rightClickErase),
+      strokeColor(),
     );
   };
 
@@ -176,10 +206,12 @@ export function bindStudioInput({
     if (event.pointerType === "touch" && touchPointers.has(event.pointerId)) {
       touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (touchPointers.size >= 2) {
+        event.preventDefault();
         const nextDistance = currentPinchDistance();
-        if (nextDistance !== null && pinchDistance !== null && pinchDistance > 0) {
-          event.preventDefault();
-          actions.applyPinchScale?.(nextDistance / pinchDistance);
+        if (nextDistance !== null) {
+          if (nextDistance > 0 && pinchDistance !== null && pinchDistance > 0) {
+            actions.applyPinchScale?.(nextDistance / pinchDistance);
+          }
           pinchDistance = nextDistance;
         }
         return;
@@ -200,19 +232,35 @@ export function bindStudioInput({
     );
   };
 
-  const handlePointerUp = (event: PointerEvent) => {
+  const removeTouchPointer = (event: PointerEvent) => {
     if (event.pointerType === "touch") {
       touchPointers.delete(event.pointerId);
       if (touchPointers.size < 2) pinchDistance = null;
     }
+  };
+
+  const handlePointerUp = (event: PointerEvent) => {
+    removeTouchPointer(event);
     if (event.pointerId === activeStrokePointer) finishStroke(true);
   };
 
+  const handlePointerCancel = (event: PointerEvent) => {
+    removeTouchPointer(event);
+    if (event.pointerId === activeStrokePointer) finishStroke(false);
+  };
+
+  const handleLostPointerCapture = (event: PointerEvent) => {
+    if (event.pointerId === activeStrokePointer) finishStroke(false);
+  };
+
   const cancelGesture = () => {
-    finishStroke(false);
-    touchPointers.clear();
-    pinchDistance = null;
-    resetEraseModifiers();
+    try {
+      finishStroke(false);
+    } finally {
+      touchPointers.clear();
+      pinchDistance = null;
+      setEraseModifiers(false, false);
+    }
   };
 
   const handleVisibilityChange = () => {
@@ -260,8 +308,7 @@ export function bindStudioInput({
     }
 
     if (event.key === "Shift" && !hasSystemModifier) {
-      shiftErase = true;
-      actions.onShiftEraseChange?.(true);
+      setEraseModifiers(true, rightClickErase);
       return;
     }
     if (event.metaKey || event.ctrlKey) {
@@ -287,19 +334,16 @@ export function bindStudioInput({
   };
 
   const handleKeyUp = (event: KeyboardEvent) => {
-    if (event.key === "Shift") {
-      shiftErase = false;
-      actions.onShiftEraseChange?.(false);
-    }
+    if (event.key === "Shift") setEraseModifiers(false, rightClickErase);
   };
 
   grid.addEventListener("pointerdown", handlePointerDown);
   grid.addEventListener("pointermove", handlePointerMove);
-  grid.addEventListener("lostpointercapture", handlePointerUp);
+  grid.addEventListener("lostpointercapture", handleLostPointerCapture);
   grid.addEventListener("selectstart", preventGridDefault);
   grid.addEventListener("contextmenu", preventGridDefault);
   windowTarget.addEventListener("pointerup", handlePointerUp);
-  windowTarget.addEventListener("pointercancel", handlePointerUp);
+  windowTarget.addEventListener("pointercancel", handlePointerCancel);
   windowTarget.addEventListener("keydown", handleKeyDown);
   windowTarget.addEventListener("keyup", handleKeyUp);
   windowTarget.addEventListener("blur", cancelGesture);
@@ -310,18 +354,24 @@ export function bindStudioInput({
       if (getPolicy().overlay !== CLOSED_OVERLAY) cancelGesture();
     },
     destroy: () => {
-      cancelGesture();
-      grid.removeEventListener("pointerdown", handlePointerDown);
-      grid.removeEventListener("pointermove", handlePointerMove);
-      grid.removeEventListener("lostpointercapture", handlePointerUp);
-      grid.removeEventListener("selectstart", preventGridDefault);
-      grid.removeEventListener("contextmenu", preventGridDefault);
-      windowTarget.removeEventListener("pointerup", handlePointerUp);
-      windowTarget.removeEventListener("pointercancel", handlePointerUp);
-      windowTarget.removeEventListener("keydown", handleKeyDown);
-      windowTarget.removeEventListener("keyup", handleKeyUp);
-      windowTarget.removeEventListener("blur", cancelGesture);
-      documentTarget.removeEventListener("visibilitychange", handleVisibilityChange);
+      try {
+        cancelGesture();
+      } finally {
+        grid.removeEventListener("pointerdown", handlePointerDown);
+        grid.removeEventListener("pointermove", handlePointerMove);
+        grid.removeEventListener("lostpointercapture", handleLostPointerCapture);
+        grid.removeEventListener("selectstart", preventGridDefault);
+        grid.removeEventListener("contextmenu", preventGridDefault);
+        windowTarget.removeEventListener("pointerup", handlePointerUp);
+        windowTarget.removeEventListener("pointercancel", handlePointerCancel);
+        windowTarget.removeEventListener("keydown", handleKeyDown);
+        windowTarget.removeEventListener("keyup", handleKeyUp);
+        windowTarget.removeEventListener("blur", cancelGesture);
+        documentTarget.removeEventListener(
+          "visibilitychange",
+          handleVisibilityChange,
+        );
+      }
     },
   };
 }

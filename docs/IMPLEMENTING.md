@@ -91,8 +91,7 @@ const binding = bindStudioInput({
     undo: () => dispatch({ type: "undo" }),
     redo: () => dispatch({ type: "redo" }),
     // Optional niceties:
-    onShiftEraseChange: (active) => setEraseCursor(active),
-    onRightClickEraseChange: (active) => setEraseCursor(active),
+    onTemporaryEraseChange: (active) => setEraseCursor(active),
     applyPinchScale: (factor) => setZoom((zoom) => zoom * factor),
   },
   shortcuts: [...],            // see step 5
@@ -154,6 +153,7 @@ const canvas = document.createElement("canvas");
 canvas.width = SIZE.columns * 16;
 canvas.height = SIZE.rows * 16;
 const context = canvas.getContext("2d");
+if (!context) throw new Error("Canvas 2D is unavailable");
 drawBackdrop(context);                                // your layers underneath
 drawStudioGrid(context, state.grid, { scale: 16 });   // the drawing on top
 ```
@@ -182,7 +182,7 @@ const store = createDesignStore<Saved>({
 });
 ```
 
-`normalize` runs on every record both when loading (dropping corrupt entries) and when saving (rejecting invalid designs with a throw). Bump `key` and move the old one into `legacyKeys` when your format changes — old data migrates and rewrites itself on first load.
+`normalize` runs on every record both when loading (dropping corrupt entries) and when saving (rejecting invalid designs with a throw). `isEqual` is required so identity follows your design format instead of generic JSON serialization. Bump `key` and move the old one into `legacyKeys` when your format changes — old data migrates and rewrites itself on first load.
 
 The `storage` parameter is any `{ getItem, setItem }` pair, so an in-memory map, IndexedDB facade, or server-backed adapter drops in.
 

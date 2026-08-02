@@ -13,7 +13,7 @@ Studio was extracted from [Chonks Studio](https://www.chonks.xyz/studio), the pi
 - **History built in.** A pure reducer models the document: every brush stroke commits as exactly one undo entry, cancelled strokes roll back cleanly, and atomic edits (clear, recolor, load, affix) are each one history step.
 - **Draw and erase.** Pointer gestures with pointer capture: left-click paints, right-click erases, holding Shift erases, two-finger touch becomes pinch-to-zoom. Gestures cancel safely on blur, tab-hide, and unmount.
 - **Keyboard shortcuts you configure.** Declare your own key map, scope shortcuts to overlays (menus, modals), and Studio handles the rest: undo/redo on `⌘Z`/`⌘⇧Z`, staying out of the way while the user types in a text field, and never shadowing system shortcuts like paste.
-- **Save as an image.** Render any grid to a PNG data URL or trigger a download, at any scale, with an optional background color — using only the native canvas API.
+- **Save as an image.** Render any grid to a PNG data URL or trigger a download, at a configurable integer pixel scale, with an optional background color — using only the native canvas API.
 - **Persistence.** A tiny versioned design store over any `localStorage`-shaped backend, with validation, migration from legacy keys, and deduplication.
 - **Fully testable without a browser.** Every module accepts injected targets (window, document, storage, canvas), so the whole editor core runs under `node:test`.
 
@@ -43,7 +43,7 @@ Studio stays dependency-free on purpose: a pixel editor core shouldn't bring a t
 
 A complete editor in ~60 lines of vanilla JS. See [docs/IMPLEMENTING.md](docs/IMPLEMENTING.md) for the full walkthrough, including React.
 
-```ts
+```js
 import {
   bindStudioInput,
   createGrid,
@@ -131,7 +131,7 @@ type StudioDocumentState = {
   grid: StudioGrid;        // (string | null)[][] — current pixels, including any in-flight stroke
   past: StudioGrid[];      // undo stack of committed snapshots
   future: StudioGrid[];    // redo stack
-  stroke: { baseline: StudioGrid; changed: boolean } | null;
+  stroke: { baseline: StudioGrid; changedCells: number } | null;
   isPristine: boolean;     // true until the first committed edit
 };
 ```
@@ -165,7 +165,7 @@ Your `getPolicy()` reports the current overlay (`"none"` means the canvas is foc
 - Typing in an `input`, `textarea`, `select`, or contenteditable never triggers shortcuts (except `allowInEditable` ones, like Escape-to-close).
 - `⌘Z`/`Ctrl+Z` undoes and `⌘⇧Z`/`Ctrl+Shift+Z` redoes, always with `preventDefault`.
 - Other system chords (`⌘C`, `⌘V`, `Alt+…`) pass through untouched.
-- Holding Shift temporarily switches to erase (reported via `onShiftEraseChange`).
+- Holding Shift temporarily switches to erase. `onTemporaryEraseChange` reports the aggregate Shift/right-click override state.
 
 ## Saving images
 

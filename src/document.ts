@@ -11,7 +11,7 @@ import {
 
 type StudioStroke = {
   baseline: StudioGrid;
-  changed: boolean;
+  changedCells: number;
 };
 
 export type StudioDocumentState = {
@@ -134,7 +134,7 @@ function beginStroke(
 
   let nextState = state;
   if (state.stroke !== null) {
-    nextState = state.stroke.changed
+    nextState = state.stroke.changedCells > 0
       ? {
           grid: state.grid,
           past: [...state.past, state.stroke.baseline],
@@ -152,7 +152,7 @@ function beginStroke(
     grid,
     stroke: {
       baseline,
-      changed: grid !== baseline,
+      changedCells: grid === baseline ? 0 : 1,
     },
   };
 }
@@ -167,21 +167,28 @@ function updateStroke(
     return state;
   }
 
+  const previousColor = state.grid[row][column];
+  const baselineColor = state.stroke.baseline[row][column];
   const grid = paintCell(state.grid, row, column, color);
   if (grid === state.grid) return state;
+
+  const wasChanged = previousColor !== baselineColor;
+  const isChanged = color !== baselineColor;
+  let { changedCells } = state.stroke;
+  if (wasChanged !== isChanged) changedCells += isChanged ? 1 : -1;
   return {
     ...state,
     grid,
     stroke: {
       ...state.stroke,
-      changed: !gridsEqual(state.stroke.baseline, grid),
+      changedCells,
     },
   };
 }
 
 function commitStroke(state: StudioDocumentState): StudioDocumentState {
   if (state.stroke === null) return state;
-  if (!state.stroke.changed) {
+  if (state.stroke.changedCells === 0) {
     return { ...state, grid: state.stroke.baseline, stroke: null };
   }
 
@@ -252,10 +259,12 @@ export function studioDocumentReducer(
       return grid === null ? state : commitAtomicEdit(state, grid);
     }
     case "affix": {
-      const incoming = tryCloneMatchingGrid(state, action.grid);
-      if (incoming === null) return state;
-      const grid = mergeGrids(committedGrid(state), incoming);
-      return commitAtomicEdit(state, grid);
+      try {
+        const grid = mergeGrids(committedGrid(state), action.grid);
+        return commitAtomicEdit(state, grid);
+      } catch {
+        return state;
+      }
     }
     case "undo": {
       if (state.stroke !== null) return cancelStroke(state);
@@ -279,5 +288,7 @@ export function studioDocumentReducer(
         future,
       };
     }
+    default:
+      return state;
   }
 }

@@ -35,13 +35,37 @@ class FakeEventTarget {
 
 class FakeGrid extends FakeEventTarget {
   readonly cells = new Set<object>();
+  private readonly pointerTypes = new Map<number, string>();
+  private readonly capturedPointers = new Set<number>();
 
   contains(target: object) {
     return this.cells.has(target);
   }
 
-  setPointerCapture() {}
-  releasePointerCapture() {}
+  override emit(type: string, event: Event) {
+    if (type === "pointerdown") {
+      const pointerEvent = event as PointerEvent;
+      this.pointerTypes.set(pointerEvent.pointerId, pointerEvent.pointerType);
+    }
+    super.emit(type, event);
+  }
+
+  setPointerCapture(pointerId: number) {
+    this.capturedPointers.add(pointerId);
+  }
+
+  hasPointerCapture(pointerId: number) {
+    return this.capturedPointers.has(pointerId);
+  }
+
+  releasePointerCapture(pointerId: number) {
+    const pointerType = this.pointerTypes.get(pointerId) ?? "mouse";
+    this.capturedPointers.delete(pointerId);
+    this.emit(
+      "lostpointercapture",
+      pointerEvent(this, { pointerId, pointerType, buttons: 0 }),
+    );
+  }
 }
 
 class FakeDocument extends FakeEventTarget {
@@ -140,6 +164,11 @@ function bind(options: {
     shortcuts: options.shortcuts,
   });
 }
+
+test("rejects invalid input grid dimensions", () => {
+  assert.throws(() => bind({ rows: 0 }), /positive integer dimensions/);
+  assert.throws(() => bind({ columns: 1.5 }), /positive integer dimensions/);
+});
 
 test("runs configured shortcuts only in their declared overlays", () => {
   const windowTarget = new FakeEventTarget();
@@ -256,13 +285,159 @@ test("delegates a pointer stroke and commits it exactly once", () => {
   binding.destroy();
 });
 
+test("cancels a stroke when the browser cancels its pointer stream", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const target = cell(1, 2);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    actions: {
+      beginStroke: () => calls.push("begin"),
+      commitStroke: () => calls.push("commit"),
+      cancelStroke: () => calls.push("cancel"),
+    },
+  });
+
+  grid.emit("pointerdown", pointerEvent(target));
+  windowTarget.emit("pointercancel", pointerEvent(grid, { buttons: 0 }));
+
+  assert.deepEqual(calls, ["begin", "cancel"]);
+  binding.destroy();
+});
+
+test("transitions a captured one-finger stroke into a pinch gesture", () => {
+  const grid = new FakeGrid();
+  const target = cell(1, 2);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    actions: {
+      beginStroke: () => calls.push("begin"),
+      cancelStroke: () => calls.push("cancel"),
+      applyPinchScale: (factor) => calls.push(`pinch:${factor}`),
+    },
+  });
+
+  grid.emit(
+    "pointerdown",
+    pointerEvent(target, {
+      pointerId: 1,
+      pointerType: "touch",
+      clientX: 0,
+      clientY: 0,
+    }),
+  );
+  grid.emit(
+    "pointerdown",
+    pointerEvent(target, {
+      pointerId: 2,
+      pointerType: "touch",
+      clientX: 10,
+      clientY: 0,
+    }),
+  );
+  grid.emit(
+    "pointermove",
+    pointerEvent(target, {
+      pointerId: 2,
+      pointerType: "touch",
+      clientX: 20,
+      clientY: 0,
+    }),
+  );
+
+  assert.deepEqual(calls, ["begin", "cancel", "pinch:2"]);
+  binding.destroy();
+});
+
+test("recovers a pinch after two touch points start at the same position", () => {
+  const grid = new FakeGrid();
+  const target = cell(1, 2);
+  grid.cells.add(target);
+  const factors: number[] = [];
+  const binding = bind({
+    grid,
+    actions: {
+      applyPinchScale: (factor) => factors.push(factor),
+    },
+  });
+
+  grid.emit(
+    "pointerdown",
+    pointerEvent(target, {
+      pointerId: 1,
+      pointerType: "touch",
+      clientX: 0,
+      clientY: 0,
+    }),
+  );
+  grid.emit(
+    "pointerdown",
+    pointerEvent(target, {
+      pointerId: 2,
+      pointerType: "touch",
+      clientX: 0,
+      clientY: 0,
+    }),
+  );
+  grid.emit(
+    "pointermove",
+    pointerEvent(target, {
+      pointerId: 2,
+      pointerType: "touch",
+      clientX: 10,
+      clientY: 0,
+    }),
+  );
+  grid.emit(
+    "pointermove",
+    pointerEvent(target, {
+      pointerId: 2,
+      pointerType: "touch",
+      clientX: 20,
+      clientY: 0,
+    }),
+  );
+
+  assert.deepEqual(factors, [2]);
+  binding.destroy();
+});
+
+test("cancels an active stroke when pointer capture is lost unexpectedly", () => {
+  const grid = new FakeGrid();
+  const target = cell(1, 2);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    actions: {
+      beginStroke: () => calls.push("begin"),
+      commitStroke: () => calls.push("commit"),
+      cancelStroke: () => calls.push("cancel"),
+    },
+  });
+
+  grid.emit("pointerdown", pointerEvent(target));
+  grid.emit("lostpointercapture", pointerEvent(grid));
+
+  assert.deepEqual(calls, ["begin", "cancel"]);
+  binding.destroy();
+});
+
 test("rejects cells outside the configured grid bounds", () => {
   const grid = new FakeGrid();
   const windowTarget = new FakeEventTarget();
   const inBounds = cell(1, 2);
   const outOfBounds = cell(2, 3);
+  const emptyCoordinate = cell(0, 0);
+  emptyCoordinate.dataset.row = "";
   grid.cells.add(inBounds);
   grid.cells.add(outOfBounds);
+  grid.cells.add(emptyCoordinate);
   const calls: string[] = [];
   const binding = bind({
     grid,
@@ -276,6 +451,7 @@ test("rejects cells outside the configured grid bounds", () => {
   });
 
   grid.emit("pointerdown", pointerEvent(outOfBounds));
+  grid.emit("pointerdown", pointerEvent(emptyCoordinate));
   grid.emit("pointerdown", pointerEvent(inBounds));
   windowTarget.emit("pointerup", pointerEvent(grid, { buttons: 0 }));
 
@@ -317,6 +493,61 @@ test("right-click and held Shift erase while optional callbacks stay optional", 
   binding.destroy();
 });
 
+test("reports aggregate temporary erase state across overlapping inputs", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const target = cell(4, 5);
+  grid.cells.add(target);
+  const eraseStates: boolean[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    actions: {
+      onTemporaryEraseChange: (active) => eraseStates.push(active),
+    },
+  });
+
+  windowTarget.emit("keydown", keyboardEvent("Shift", { tagName: "BODY" }));
+  grid.emit("pointerdown", pointerEvent(target, { button: 2, buttons: 2 }));
+  windowTarget.emit("pointerup", pointerEvent(grid, { button: 2, buttons: 0 }));
+  windowTarget.emit("keyup", keyboardEvent("Shift", { tagName: "BODY" }));
+
+  assert.deepEqual(eraseStates, [true, false]);
+  binding.destroy();
+});
+
+test("releases pointer state when a stroke completion callback throws", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const target = cell(4, 5);
+  grid.cells.add(target);
+  const eraseStates: boolean[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    actions: {
+      commitStroke: () => {
+        throw new Error("commit failed");
+      },
+      onTemporaryEraseChange: (active) => eraseStates.push(active),
+    },
+  });
+
+  grid.emit("pointerdown", pointerEvent(target, { button: 2, buttons: 2 }));
+  assert.throws(
+    () =>
+      windowTarget.emit(
+        "pointerup",
+        pointerEvent(grid, { button: 2, buttons: 0 }),
+      ),
+    /commit failed/,
+  );
+
+  assert.deepEqual(eraseStates, [true, false]);
+  assert.equal(grid.hasPointerCapture(1), false);
+  binding.destroy();
+});
+
 test("cancels gestures on blur and removes every listener on destroy", () => {
   const grid = new FakeGrid();
   const windowTarget = new FakeEventTarget();
@@ -339,6 +570,32 @@ test("cancels gestures on blur and removes every listener on destroy", () => {
   binding.destroy();
 
   assert.deepEqual(calls, ["begin", "cancel"]);
+  assert.equal(grid.listenerCount("pointerdown"), 0);
+  assert.equal(windowTarget.listenerCount("keydown"), 0);
+  assert.equal(documentTarget.listenerCount("visibilitychange"), 0);
+});
+
+test("removes every listener when cancellation throws during destroy", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const documentTarget = new FakeDocument();
+  const target = cell(6, 7);
+  grid.cells.add(target);
+  const binding = bind({
+    grid,
+    windowTarget,
+    documentTarget,
+    actions: {
+      cancelStroke: () => {
+        throw new Error("cancel failed");
+      },
+    },
+  });
+
+  grid.emit("pointerdown", pointerEvent(target));
+  assert.throws(() => binding.destroy(), /cancel failed/);
+
+  assert.equal(grid.hasPointerCapture(1), false);
   assert.equal(grid.listenerCount("pointerdown"), 0);
   assert.equal(windowTarget.listenerCount("keydown"), 0);
   assert.equal(documentTarget.listenerCount("visibilitychange"), 0);

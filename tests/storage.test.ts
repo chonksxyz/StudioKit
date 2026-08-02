@@ -38,6 +38,19 @@ function createStore(storage: StudioStorage) {
   });
 }
 
+test("requires explicit design equality at construction", () => {
+  assert.throws(
+    () =>
+      // @ts-expect-error Design identity must be explicit.
+      createDesignStore<Design>({
+        storage: createMemoryStorage(),
+        key: "studio:v1",
+        normalize: normalizeDesign,
+      }),
+    /isEqual/,
+  );
+});
+
 test("saves, deduplicates, and rejects invalid designs", () => {
   const storage = createMemoryStorage();
   const store = createStore(storage);
