@@ -12,6 +12,7 @@ Studio was extracted from [Chonks Studio](https://www.chonks.xyz/studio), the pi
 - **A grid you define.** Any rectangular dimensions — 16×16, 30×30, 64×32. Cells are valid CSS color strings or `null` (empty).
 - **History built in.** A pure reducer models the document: every brush stroke commits as exactly one undo entry, cancelled strokes roll back cleanly, and atomic edits (clear, recolor, load, affix) are each one history step.
 - **Draw and erase.** Pointer gestures with pointer capture: left-click paints, right-click erases, holding Shift erases, two-finger touch becomes pinch-to-zoom. Gestures cancel safely on blur, tab-hide, and unmount.
+- **Select, drag, and drop cells.** Shift-click or drag out a multi-cell selection, move it with the pointer or the arrow keys, and commit it as one undo entry. Selections outline as a single shape, cells carried off the canvas are deleted, and Escape puts everything back.
 - **Keyboard shortcuts you configure.** Declare your own key map, scope shortcuts to overlays (menus, modals), and Studio handles the rest: undo/redo on `⌘Z`/`⌘⇧Z`, staying out of the way while the user types in a text field, and never shadowing system shortcuts like paste.
 - **Save as an image.** Render any grid to a PNG data URL or trigger a download, at a configurable integer pixel scale, with an optional background color — using only the native canvas API.
 - **Persistence.** A tiny versioned design store over any `localStorage`-shaped backend, with validation, migration from legacy keys, and deduplication.
@@ -116,6 +117,7 @@ const binding = bindStudioInput({
 | --- | --- |
 | `grid` | `createGrid`, `cloneGrid`, `mergeGrids`, `gridsEqual`, `getGridSize` — immutable helpers for rectangular grids of any size |
 | `document` | `createStudioDocument`, `studioDocumentReducer`, `canUndo`, `canRedo` — the pure document reducer with stroke-grained history |
+| `selection` | `createSelection`, `toggleSelectionCell`, `selectionOutline`, `selectionRegions`, `stampSelection` — the pure selection model and its outline geometry |
 | `input` | `bindStudioInput` — delegated pointer gestures plus your configurable shortcut map |
 | `image` | `drawStudioGrid`, `studioGridToDataUrl`, `saveStudioGridImage` — canvas-based export and download |
 | `storage` | `createDesignStore` — versioned, validated persistence over any storage adapter |
@@ -128,10 +130,11 @@ The document is a plain immutable value:
 
 ```ts
 type StudioDocumentState = {
-  grid: StudioGrid;        // (string | null)[][] — current pixels, including any in-flight stroke
+  grid: StudioGrid;        // (string | null)[][] — current pixels, including any in-flight stroke or floating selection
   past: StudioGrid[];      // undo stack of committed snapshots
   future: StudioGrid[];    // redo stack
   stroke: { baseline: StudioGrid; changedCells: number } | null;
+  float: StudioFloatingSelection | null;  // cells lifted by a selection drag
   isPristine: boolean;     // true until the first committed edit
 };
 ```
@@ -140,10 +143,41 @@ Rules the reducer enforces for you:
 
 - A stroke (`begin-stroke` → `update-stroke`* → `commit-stroke`) is **one** undo entry, no matter how many cells it touches.
 - A stroke that changes nothing never pollutes history; `cancel-stroke` restores the pre-stroke grid.
-- `undo`/`redo` during an active stroke cancel the draft instead of navigating history.
+- A selection move (`lift-selection` → `move-selection`* → `commit-selection`) is **one** undo entry too; `cancel-selection` restores the pre-lift grid.
+- `undo`/`redo` during an active stroke or selection move cancel the draft instead of navigating history.
 - `clear`, `recolor`, `load`, and `affix` (merge a grid on top) are each atomic and undoable.
 - `hydrate` seeds a pristine document (e.g. from a URL or saved file) without creating history.
 - Grids passed in are cloned at every boundary; grids whose dimensions don't match the document are ignored.
+
+## Selections
+
+A selection is just a normalized list of cells — `readonly { row, column }[]` — that you hold in your own state. The `selection` module gives you the algebra (`toggleSelectionCell`, `selectionRectangle`, `translateSelection`) and the geometry you need to draw it:
+
+```ts
+import { selectionOutline, selectionRegions, isSelectionContiguous } from "@chonksxyz/studio";
+
+// Exterior edges only: shared sides between neighbouring cells are omitted, so
+// a contiguous shape outlines as one ring with no seams through the middle.
+for (const { row, column, side } of selectionOutline(selection)) {
+  cellAt(row, column).classList.add(`edge-${side}`);
+}
+
+// Cells touching only at a corner are separate regions, each with its own ring:
+selectionRegions(selection);        // [[{0,0}], [{1,1}]] for a diagonal pair
+isSelectionContiguous(selection);   // false
+```
+
+Moving a selection runs through the document reducer, so the whole move is one undo entry:
+
+| Action | Effect |
+| --- | --- |
+| `lift-selection` | Cut the selected cells off the canvas into a float (rendered in place, at offset zero) |
+| `move-selection` | Nudge the float by a delta; pass `selection` to lift on the first nudge, so arrow keys work without a drag |
+| `place-selection` | Put the float at an absolute offset — what a pointer drag dispatches |
+| `commit-selection` | Write the float into the grid (one history entry) |
+| `cancel-selection` | Restore the pre-lift grid |
+
+Two behaviours worth knowing: a float **overwrites** what it lands on, and cells moved past the grid edge are **dropped** — moving pixels off the canvas deletes them. `getFloatingSelection(state)` returns the float's current coordinates (including off-canvas ones) so you can outline it while it moves; `selectionWithinGrid` filters them to what will survive the commit.
 
 ## Keyboard shortcuts
 
@@ -165,7 +199,8 @@ Your `getPolicy()` reports the current overlay (`"none"` means the canvas is foc
 - Typing in an `input`, `textarea`, `select`, or contenteditable never triggers shortcuts (except `allowInEditable` ones, like Escape-to-close).
 - `⌘Z`/`Ctrl+Z` undoes and `⌘⇧Z`/`Ctrl+Shift+Z` redoes, always with `preventDefault`.
 - Other system chords (`⌘C`, `⌘V`, `Alt+…`) pass through untouched.
-- Holding Shift temporarily switches to erase. `onTemporaryEraseChange` reports the aggregate Shift/right-click override state.
+- Holding Shift temporarily switches to erase — except in `mode: "select"`, where Shift adds to the selection instead. `onTemporaryEraseChange` reports the aggregate Shift/right-click override state.
+- In `mode: "select"` with something selected, the arrow keys move the selection, Enter commits it, and Escape cancels it.
 
 ## Saving images
 

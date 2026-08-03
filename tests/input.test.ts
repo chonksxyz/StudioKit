@@ -148,6 +148,9 @@ function bind(options: {
   shortcuts?: readonly StudioShortcut[];
   rows?: number;
   columns?: number;
+  mode?: () => "draw" | "erase" | "select";
+  isSelected?: (row: number, column: number) => boolean;
+  hasSelection?: () => boolean;
 }): Binding {
   return bindStudioInput({
     grid: (options.grid ?? new FakeGrid()) as unknown as HTMLElement,
@@ -159,8 +162,10 @@ function bind(options: {
       new FakeDocument()) as unknown as Document,
     getPolicy: () => ({
       overlay: options.overlay?.() ?? "none",
-      mode: "draw",
+      mode: options.mode?.() ?? "draw",
       selectedColor: "#123456",
+      isSelected: options.isSelected,
+      hasSelection: options.hasSelection?.() ?? false,
     }),
     actions: createActions(options.actions),
     shortcuts: options.shortcuts,
@@ -835,4 +840,184 @@ test("removes every listener when cancellation throws during destroy", () => {
   assert.equal(grid.listenerCount("pointerdown"), 0);
   assert.equal(windowTarget.listenerCount("keydown"), 0);
   assert.equal(documentTarget.listenerCount("visibilitychange"), 0);
+});
+
+function selectionActions(calls: string[]) {
+  return {
+    beginSelect: (row: number, column: number, additive: boolean) =>
+      calls.push(`begin-select:${row},${column}:${additive}`),
+    extendSelect: (row: number, column: number, additive: boolean) =>
+      calls.push(`extend-select:${row},${column}:${additive}`),
+    endSelect: () => calls.push("end-select"),
+    beginMove: (row: number, column: number) =>
+      calls.push(`begin-move:${row},${column}`),
+    moveTo: (rowOffset: number, columnOffset: number) =>
+      calls.push(`move-to:${rowOffset},${columnOffset}`),
+    endMove: () => calls.push("end-move"),
+    nudge: (rowDelta: number, columnDelta: number) =>
+      calls.push(`nudge:${rowDelta},${columnDelta}`),
+    commit: () => calls.push("commit"),
+    cancel: () => calls.push("cancel"),
+  };
+}
+
+test("shift-drags a multi-cell selection instead of drawing", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const documentTarget = new FakeDocument();
+  const first = cell(1, 1);
+  const second = cell(1, 2);
+  grid.cells.add(first);
+  grid.cells.add(second);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    documentTarget,
+    mode: () => "select",
+    actions: {
+      beginStroke: () => calls.push("draw"),
+      selection: selectionActions(calls),
+    },
+  });
+
+  grid.emit("pointerdown", pointerEvent(first, { shiftKey: true }));
+  documentTarget.hitTarget = second;
+  grid.emit("pointermove", pointerEvent(second));
+  grid.emit("pointermove", pointerEvent(second)); // same cell, no repeat
+  windowTarget.emit("pointerup", pointerEvent(second, { buttons: 0 }));
+
+  assert.deepEqual(calls, [
+    "begin-select:1,1:true",
+    "extend-select:1,2:true",
+    "end-select",
+  ]);
+  binding.destroy();
+});
+
+test("drags an existing selection by grabbing one of its cells", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const documentTarget = new FakeDocument();
+  const grabbed = cell(1, 1);
+  const dropped = cell(3, 2);
+  grid.cells.add(grabbed);
+  grid.cells.add(dropped);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    documentTarget,
+    mode: () => "select",
+    isSelected: (row, column) => row === 1 && column === 1,
+    actions: { selection: selectionActions(calls) },
+  });
+
+  grid.emit("pointerdown", pointerEvent(grabbed));
+  documentTarget.hitTarget = dropped;
+  grid.emit("pointermove", pointerEvent(dropped));
+  windowTarget.emit("pointerup", pointerEvent(dropped, { buttons: 0 }));
+
+  assert.deepEqual(calls, ["begin-move:1,1", "move-to:2,1", "end-move"]);
+  binding.destroy();
+});
+
+test("shift-clicking a selected cell keeps selecting instead of moving", () => {
+  const grid = new FakeGrid();
+  const target = cell(1, 1);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    mode: () => "select",
+    isSelected: () => true,
+    actions: { selection: selectionActions(calls) },
+  });
+
+  grid.emit("pointerdown", pointerEvent(target, { shiftKey: true }));
+
+  assert.deepEqual(calls, ["begin-select:1,1:true"]);
+  binding.destroy();
+});
+
+test("select mode suppresses drawing and shift-to-erase", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const target = cell(1, 1);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    mode: () => "select",
+    actions: {
+      beginStroke: () => calls.push("draw"),
+      onTemporaryEraseChange: (active) => calls.push(`erase:${active}`),
+      selection: selectionActions(calls),
+    },
+  });
+
+  windowTarget.emit("keydown", keyboardEvent("Shift", { tagName: "BODY" }));
+  grid.emit("pointerdown", pointerEvent(target, { button: 2, buttons: 2 }));
+
+  assert.deepEqual(calls, []);
+  binding.destroy();
+});
+
+test("moves, commits, and cancels a selection from the keyboard", () => {
+  const windowTarget = new FakeEventTarget();
+  const calls: string[] = [];
+  let hasSelection = false;
+  const prevented: string[] = [];
+  const binding = bind({
+    windowTarget,
+    mode: () => "select",
+    hasSelection: () => hasSelection,
+    actions: { selection: selectionActions(calls) },
+  });
+  const body = { tagName: "BODY" };
+  const press = (key: string, overrides: Partial<KeyboardEvent> = {}) =>
+    windowTarget.emit(
+      "keydown",
+      keyboardEvent(key, body, {
+        preventDefault: () => prevented.push(key),
+        ...overrides,
+      }),
+    );
+
+  press("ArrowRight");
+  assert.deepEqual(calls, []); // nothing selected yet
+
+  hasSelection = true;
+  press("ArrowRight");
+  press("ArrowUp");
+  press("Enter");
+  press("Escape");
+  press("ArrowLeft", { metaKey: true }); // system chords pass through
+
+  assert.deepEqual(calls, ["nudge:0,1", "nudge:-1,0", "commit", "cancel"]);
+  assert.deepEqual(prevented, ["ArrowRight", "ArrowUp", "Enter", "Escape"]);
+  binding.destroy();
+});
+
+test("ends a selection drag on blur without discarding the selection", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const target = cell(1, 1);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    mode: () => "select",
+    isSelected: () => true,
+    actions: { selection: selectionActions(calls) },
+  });
+
+  grid.emit("pointerdown", pointerEvent(target));
+  windowTarget.emit("blur", new Event("blur"));
+
+  assert.deepEqual(calls, ["begin-move:1,1", "end-move"]);
+  binding.destroy();
+  assert.deepEqual(calls, ["begin-move:1,1", "end-move"]);
 });

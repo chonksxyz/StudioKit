@@ -4,6 +4,7 @@ import {
   canRedo,
   canUndo,
   createStudioDocument,
+  getFloatingSelection,
   studioDocumentReducer,
   type StudioDocumentAction,
   type StudioDocumentState,
@@ -225,4 +226,275 @@ test("ignores unknown actions from untyped callers", () => {
   const action = { type: "unknown" } as unknown as StudioDocumentAction;
 
   assert.equal(studioDocumentReducer(state, action), state);
+});
+
+test("moves a lifted selection and commits it as one undo entry", () => {
+  const state = reduce(createStudioDocument(createGrid(SIZE)), {
+    type: "load",
+    grid: gridWith([1, 1, "#aaaaaa"], [1, 2, "#bbbbbb"], [2, 4, "#cccccc"]),
+  });
+
+  const lifted = reduce(state, {
+    type: "lift-selection",
+    selection: [
+      { row: 1, column: 1 },
+      { row: 1, column: 2 },
+    ],
+  });
+  assert.notEqual(lifted.float, null);
+  // A lift at offset zero renders in place — nothing visibly changes yet.
+  assert.equal(lifted.grid[1][1], "#aaaaaa");
+  assert.equal(lifted.grid[1][2], "#bbbbbb");
+  assert.deepEqual(getFloatingSelection(lifted), [
+    { row: 1, column: 1 },
+    { row: 1, column: 2 },
+  ]);
+
+  const moved = reduce(
+    lifted,
+    { type: "move-selection", rowDelta: 1, columnDelta: 1 },
+    { type: "move-selection", rowDelta: 0, columnDelta: 1 },
+  );
+  assert.deepEqual(moved.float?.offset, { row: 1, column: 2 });
+  assert.equal(moved.grid[2][3], "#aaaaaa");
+  assert.equal(moved.grid[2][4], "#bbbbbb"); // overwrote the cell underneath
+  assert.deepEqual(getFloatingSelection(moved), [
+    { row: 2, column: 3 },
+    { row: 2, column: 4 },
+  ]);
+  assert.equal(moved.past.length, state.past.length); // still uncommitted
+
+  const committed = reduce(moved, { type: "commit-selection" });
+  assert.equal(committed.float, null);
+  assert.equal(getFloatingSelection(committed), null);
+  assert.equal(committed.past.length, state.past.length + 1);
+  assert.equal(committed.grid[1][1], null);
+  assert.equal(committed.grid[2][3], "#aaaaaa");
+
+  const undone = reduce(committed, { type: "undo" });
+  assert.equal(undone.grid[1][1], "#aaaaaa");
+  assert.equal(undone.grid[2][4], "#cccccc");
+});
+
+test("places a selection at an absolute offset while dragging", () => {
+  const state = reduce(createStudioDocument(createGrid(SIZE)), {
+    type: "load",
+    grid: gridWith([0, 0, "#aaaaaa"]),
+  });
+  const lifted = reduce(state, {
+    type: "lift-selection",
+    selection: [{ row: 0, column: 0 }],
+  });
+
+  const placed = reduce(lifted, {
+    type: "place-selection",
+    rowOffset: 2,
+    columnOffset: 3,
+  });
+  assert.equal(placed.grid[2][3], "#aaaaaa");
+  assert.equal(
+    studioDocumentReducer(placed, {
+      type: "place-selection",
+      rowOffset: 2,
+      columnOffset: 3,
+    }),
+    placed,
+  );
+  assert.equal(
+    studioDocumentReducer(placed, {
+      type: "place-selection",
+      rowOffset: 0.5,
+      columnOffset: 0,
+    }),
+    placed,
+  );
+  assert.equal(
+    studioDocumentReducer(placed, {
+      type: "move-selection",
+      rowDelta: Number.NaN,
+      columnDelta: 0,
+    }),
+    placed,
+  );
+});
+
+test("deletes the cells a selection carries off the canvas", () => {
+  const state = reduce(createStudioDocument(createGrid(SIZE)), {
+    type: "load",
+    grid: gridWith([0, 0, "#aaaaaa"], [0, 1, "#bbbbbb"]),
+  });
+
+  const committed = reduce(
+    state,
+    {
+      type: "lift-selection",
+      selection: [
+        { row: 0, column: 0 },
+        { row: 0, column: 1 },
+      ],
+    },
+    { type: "move-selection", rowDelta: 0, columnDelta: -1 },
+    { type: "commit-selection" },
+  );
+
+  assert.equal(committed.grid[0][0], "#bbbbbb");
+  assert.equal(committed.grid[0][1], null);
+  assert.equal(committed.past.length, state.past.length + 1);
+});
+
+test("cancels a floating selection back to its baseline", () => {
+  const state = reduce(createStudioDocument(createGrid(SIZE)), {
+    type: "load",
+    grid: gridWith([1, 1, "#aaaaaa"]),
+  });
+
+  for (const action of [
+    { type: "cancel-selection" },
+    { type: "undo" },
+    { type: "redo" },
+  ] as const) {
+    const cancelled = reduce(
+      state,
+      {
+        type: "lift-selection",
+        selection: [{ row: 1, column: 1 }],
+      },
+      { type: "move-selection", rowDelta: 2, columnDelta: 0 },
+      action,
+    );
+
+    assert.equal(cancelled.float, null);
+    assert.equal(cancelled.grid[1][1], "#aaaaaa");
+    assert.equal(cancelled.grid[3][1], null);
+    assert.equal(cancelled.past.length, state.past.length);
+    assert.equal(cancelled.future.length, 0);
+  }
+});
+
+test("keeps history clean when a lifted selection never moves", () => {
+  const state = reduce(createStudioDocument(createGrid(SIZE)), {
+    type: "load",
+    grid: gridWith([1, 1, "#aaaaaa"]),
+  });
+
+  const committed = reduce(
+    state,
+    { type: "lift-selection", selection: [{ row: 1, column: 1 }] },
+    { type: "commit-selection" },
+  );
+
+  assert.equal(committed.float, null);
+  assert.equal(committed.past.length, state.past.length);
+  assert.equal(committed.grid[1][1], "#aaaaaa");
+  assert.equal(studioDocumentReducer(state, { type: "commit-selection" }), state);
+  assert.equal(studioDocumentReducer(state, { type: "cancel-selection" }), state);
+});
+
+test("ignores empty lifts and refuses to lift twice", () => {
+  const state = reduce(createStudioDocument(createGrid(SIZE)), {
+    type: "load",
+    grid: gridWith([1, 1, "#aaaaaa"]),
+  });
+
+  assert.equal(
+    studioDocumentReducer(state, { type: "lift-selection", selection: [] }),
+    state,
+  );
+  assert.equal(
+    studioDocumentReducer(state, {
+      type: "lift-selection",
+      selection: [{ row: 9, column: 9 }],
+    }),
+    state,
+  );
+
+  const lifted = reduce(state, {
+    type: "lift-selection",
+    selection: [{ row: 1, column: 1 }],
+  });
+  assert.equal(
+    studioDocumentReducer(lifted, {
+      type: "lift-selection",
+      selection: [{ row: 0, column: 0 }],
+    }),
+    lifted,
+  );
+});
+
+test("lifting cancels an in-flight stroke and strokes wait for the float", () => {
+  const state = createStudioDocument(createGrid(SIZE));
+  const drafting = reduce(state, {
+    type: "begin-stroke",
+    row: 0,
+    column: 0,
+    color: "#aaaaaa",
+  });
+
+  const lifted = reduce(drafting, {
+    type: "lift-selection",
+    selection: [{ row: 2, column: 2 }],
+  });
+  assert.equal(lifted.stroke, null);
+  assert.equal(lifted.grid[0][0], null);
+
+  assert.equal(
+    studioDocumentReducer(lifted, {
+      type: "begin-stroke",
+      row: 3,
+      column: 3,
+      color: "#bbbbbb",
+    }),
+    lifted,
+  );
+});
+
+test("atomic edits drop a floating selection at its current position", () => {
+  const state = reduce(createStudioDocument(createGrid(SIZE)), {
+    type: "load",
+    grid: gridWith([1, 1, "#aaaaaa"]),
+  });
+  const moved = reduce(
+    state,
+    { type: "lift-selection", selection: [{ row: 1, column: 1 }] },
+    { type: "move-selection", rowDelta: 1, columnDelta: 0 },
+  );
+
+  const cleared = reduce(moved, { type: "clear" });
+  assert.equal(cleared.float, null);
+  assert.equal(cleared.past.at(-1)?.[1][1], "#aaaaaa"); // undoes to pre-lift
+  assert.equal(cleared.grid[2][1], null);
+
+  const hydrated = studioDocumentReducer(
+    reduce(createStudioDocument(createGrid(SIZE)), {
+      type: "lift-selection",
+      selection: [{ row: 0, column: 0 }],
+    }),
+    { type: "hydrate", grid: gridWith([0, 0, "#bbbbbb"]) },
+  );
+  assert.equal(hydrated.grid[0][0], null);
+});
+
+test("lifts on the first nudge so arrow keys work without a drag", () => {
+  const state = reduce(createStudioDocument(createGrid(SIZE)), {
+    type: "load",
+    grid: gridWith([1, 1, "#aaaaaa"]),
+  });
+  const selection = [{ row: 1, column: 1 }];
+
+  const nudged = reduce(
+    state,
+    { type: "move-selection", rowDelta: 1, columnDelta: 0, selection },
+    { type: "move-selection", rowDelta: 1, columnDelta: 0, selection },
+  );
+
+  assert.deepEqual(nudged.float?.offset, { row: 2, column: 0 });
+  assert.deepEqual(nudged.float?.contents, [
+    { row: 1, column: 1, color: "#aaaaaa" },
+  ]);
+  assert.equal(nudged.grid[3][1], "#aaaaaa");
+  assert.equal(nudged.grid[1][1], null);
+  assert.equal(
+    studioDocumentReducer(state, { type: "move-selection", rowDelta: 1, columnDelta: 0 }),
+    state,
+  );
 });

@@ -2,8 +2,33 @@ import type { StudioCell } from "./grid.ts";
 
 export type StudioInputPolicy = {
   overlay: string;
-  mode: "draw" | "erase";
+  mode: "draw" | "erase" | "select";
   selectedColor: string;
+  /** Whether a cell is part of the current selection — required in select mode. */
+  isSelected?: (row: number, column: number) => boolean;
+  /** Whether anything is selected, which arms the selection keys. */
+  hasSelection?: boolean;
+};
+
+export type StudioSelectionInputActions = {
+  /** Pointer down on an unselected cell. `additive` is Shift held. */
+  beginSelect: (row: number, column: number, additive: boolean) => void;
+  /** Pointer dragged onto another cell while selecting. */
+  extendSelect: (row: number, column: number, additive: boolean) => void;
+  /** The select drag ended (the selection itself stays). */
+  endSelect?: () => void;
+  /** Pointer down on a selected cell — lift the selection off the canvas. */
+  beginMove: (row: number, column: number) => void;
+  /** Drag offset from the grabbed cell, in cells. */
+  moveTo: (rowOffset: number, columnOffset: number) => void;
+  /** The move drag ended; the selection stays floating until commit/cancel. */
+  endMove?: () => void;
+  /** Arrow-key nudge, relative to the current offset. */
+  nudge: (rowDelta: number, columnDelta: number) => void;
+  /** Write the moved cells into the grid (Enter, or your own button). */
+  commit: () => void;
+  /** Put everything back (Escape, or your own button). */
+  cancel: () => void;
 };
 
 export type StudioShortcut = {
@@ -23,6 +48,7 @@ export type StudioInputActions = {
   redo: () => void;
   onTemporaryEraseChange?: (active: boolean) => void;
   applyPinchScale?: (factor: number) => void;
+  selection?: StudioSelectionInputActions;
 };
 
 export type StudioInputBinding = {
@@ -46,6 +72,25 @@ const CLOSED_OVERLAY = "none";
 const DEFAULT_CELL_SELECTOR = "[data-row][data-col]";
 const DEFAULT_SHORTCUT_OVERLAYS: readonly string[] = [CLOSED_OVERLAY];
 const GRID_COORDINATE_PATTERN = /^\d+$/;
+const ARROW_DELTAS: Record<
+  string,
+  { row: number; column: number } | undefined
+> = {
+  ArrowUp: { row: -1, column: 0 },
+  ArrowDown: { row: 1, column: 0 },
+  ArrowLeft: { row: 0, column: -1 },
+  ArrowRight: { row: 0, column: 1 },
+};
+
+type SelectionGesture = {
+  pointerId: number;
+  kind: "select" | "move";
+  additive: boolean;
+  row: number;
+  column: number;
+  lastRow: number;
+  lastColumn: number;
+};
 
 type EditableTarget = {
   tagName?: string;
@@ -100,6 +145,7 @@ export function bindStudioInput({
   let rightClickErase = false;
   const touchPointers = new Map<number, { x: number; y: number }>();
   let pinchDistance: number | null = null;
+  let selectionGesture: SelectionGesture | null = null;
 
   const currentPinchDistance = () => {
     const pointers = touchPointers.values();
@@ -188,6 +234,18 @@ export function bindStudioInput({
     }
   };
 
+  const finishSelectionGesture = (releaseCapture = true) => {
+    const gesture = selectionGesture;
+    if (gesture === null) return;
+    selectionGesture = null;
+    try {
+      if (gesture.kind === "move") actions.selection?.endMove?.();
+      else actions.selection?.endSelect?.();
+    } finally {
+      if (releaseCapture) releasePointerCapture(gesture.pointerId);
+    }
+  };
+
   const rollbackStrokeStart = (event: PointerEvent, strokeBegan: boolean) => {
     activeStrokePointer = null;
     removeTouchPointer(event);
@@ -206,8 +264,49 @@ export function bindStudioInput({
     } catch {}
   };
 
+  const beginSelectionGesture = (
+    event: PointerEvent,
+    policy: StudioInputPolicy,
+    coordinates: { row: number; column: number },
+  ) => {
+    const selection = actions.selection;
+    if (!selection || event.button !== 0 || selectionGesture !== null) return;
+
+    event.preventDefault();
+    const { row, column } = coordinates;
+    const additive = event.shiftKey;
+    const grabbedSelectedCell =
+      !additive && (policy.isSelected?.(row, column) ?? false);
+    const kind = grabbedSelectedCell ? "move" : "select";
+    selectionGesture = {
+      pointerId: event.pointerId,
+      kind,
+      additive,
+      row,
+      column,
+      lastRow: row,
+      lastColumn: column,
+    };
+    try {
+      grid.setPointerCapture?.(event.pointerId);
+      if (kind === "move") selection.beginMove(row, column);
+      else selection.beginSelect(row, column, additive);
+    } catch (error) {
+      selectionGesture = null;
+      // Cleanup failures must not replace the error that aborted the gesture.
+      try {
+        removeTouchPointer(event);
+      } catch {}
+      try {
+        releasePointerCapture(event.pointerId);
+      } catch {}
+      throw error;
+    }
+  };
+
   const handlePointerDown = (event: PointerEvent) => {
-    if (getPolicy().overlay !== CLOSED_OVERLAY) return;
+    const policy = getPolicy();
+    if (policy.overlay !== CLOSED_OVERLAY) return;
     if (event.pointerType === "touch") {
       touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (touchPointers.size >= 2) {
@@ -221,6 +320,11 @@ export function bindStudioInput({
     if (event.button !== 0 && event.button !== 2) return;
     const coordinates = cellCoordinates(event.target);
     if (!coordinates) return;
+
+    if (policy.mode === "select") {
+      beginSelectionGesture(event, policy, coordinates);
+      return;
+    }
 
     event.preventDefault();
     activeStrokePointer = event.pointerId;
@@ -252,6 +356,38 @@ export function bindStudioInput({
         return;
       }
     }
+    if (selectionGesture !== null && event.pointerId === selectionGesture.pointerId) {
+      const gesture = selectionGesture;
+      const policy = getPolicy();
+      if (policy.overlay !== CLOSED_OVERLAY || policy.mode !== "select") {
+        finishSelectionGesture();
+        return;
+      }
+      const target = documentTarget.elementFromPoint(event.clientX, event.clientY);
+      const coordinates = cellCoordinates(target);
+      if (
+        !coordinates ||
+        (coordinates.row === gesture.lastRow &&
+          coordinates.column === gesture.lastColumn)
+      ) {
+        return;
+      }
+      gesture.lastRow = coordinates.row;
+      gesture.lastColumn = coordinates.column;
+      if (gesture.kind === "move") {
+        actions.selection?.moveTo(
+          coordinates.row - gesture.row,
+          coordinates.column - gesture.column,
+        );
+      } else {
+        actions.selection?.extendSelect(
+          coordinates.row,
+          coordinates.column,
+          gesture.additive,
+        );
+      }
+      return;
+    }
     if (event.pointerId !== activeStrokePointer) return;
     if (getPolicy().overlay !== CLOSED_OVERLAY) {
       finishStroke(false);
@@ -269,28 +405,39 @@ export function bindStudioInput({
 
   const handlePointerUp = (event: PointerEvent) => {
     const removedTouch = removeTouchPointer(event);
-    if (event.pointerId === activeStrokePointer) finishStroke(true);
+    if (event.pointerId === selectionGesture?.pointerId) {
+      finishSelectionGesture();
+    } else if (event.pointerId === activeStrokePointer) finishStroke(true);
     else if (removedTouch) releasePointerCapture(event.pointerId);
   };
 
   const handlePointerCancel = (event: PointerEvent) => {
     const removedTouch = removeTouchPointer(event);
-    if (event.pointerId === activeStrokePointer) finishStroke(false);
+    if (event.pointerId === selectionGesture?.pointerId) {
+      finishSelectionGesture();
+    } else if (event.pointerId === activeStrokePointer) finishStroke(false);
     else if (removedTouch) releasePointerCapture(event.pointerId);
   };
 
   const handleLostPointerCapture = (event: PointerEvent) => {
     removeTouchPointer(event);
-    if (event.pointerId === activeStrokePointer) finishStroke(false);
+    if (event.pointerId === selectionGesture?.pointerId) {
+      finishSelectionGesture(false);
+    } else if (event.pointerId === activeStrokePointer) finishStroke(false);
   };
 
   const cancelGesture = () => {
     try {
       finishStroke(false);
     } finally {
-      touchPointers.clear();
-      pinchDistance = null;
-      setEraseModifiers(false, false);
+      try {
+        // Ends the drag only — the selection itself survives blur and overlays.
+        finishSelectionGesture();
+      } finally {
+        touchPointers.clear();
+        pinchDistance = null;
+        setEraseModifiers(false, false);
+      }
     }
   };
 
@@ -308,7 +455,8 @@ export function bindStudioInput({
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
 
-    const overlay = getPolicy().overlay;
+    const policy = getPolicy();
+    const overlay = policy.overlay;
     const key = event.key.toLowerCase();
     for (const shortcut of shortcuts) {
       if (
@@ -339,8 +487,32 @@ export function bindStudioInput({
     }
 
     if (event.key === "Shift" && !hasSystemModifier) {
-      setEraseModifiers(true, rightClickErase);
+      // In select mode Shift adds to the selection instead of erasing.
+      if (policy.mode !== "select") setEraseModifiers(true, rightClickErase);
       return;
+    }
+    if (
+      policy.mode === "select" &&
+      policy.hasSelection === true &&
+      actions.selection &&
+      !hasSystemModifier
+    ) {
+      const delta = ARROW_DELTAS[event.key];
+      if (delta) {
+        event.preventDefault();
+        actions.selection.nudge(delta.row, delta.column);
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        actions.selection.commit();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        actions.selection.cancel();
+        return;
+      }
     }
     if (event.metaKey || event.ctrlKey) {
       if (key === "z" && !event.altKey) {

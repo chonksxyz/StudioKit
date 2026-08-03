@@ -8,10 +8,30 @@ import {
   type StudioCell,
   type StudioGrid,
 } from "./grid.ts";
+import {
+  clearSelection,
+  readSelection,
+  stampSelection,
+  translateSelection,
+  type StudioSelection,
+  type StudioSelectionContent,
+  type StudioSelectionOffset,
+} from "./selection.ts";
 
 type StudioStroke = {
   baseline: StudioGrid;
   changedCells: number;
+};
+
+/**
+ * Cells lifted off the canvas and floating at `offset`. The grid always shows
+ * the float in its current position; `baseline` is the committed grid to
+ * restore on cancel.
+ */
+export type StudioFloatingSelection = {
+  baseline: StudioGrid;
+  contents: readonly StudioSelectionContent[];
+  offset: StudioSelectionOffset;
 };
 
 export type StudioDocumentState = {
@@ -19,6 +39,7 @@ export type StudioDocumentState = {
   past: StudioGrid[];
   future: StudioGrid[];
   stroke: StudioStroke | null;
+  float: StudioFloatingSelection | null;
   isPristine: boolean;
 };
 
@@ -55,6 +76,25 @@ export type StudioDocumentAction =
       type: "affix";
       grid: StudioGrid;
     }
+  | {
+      type: "lift-selection";
+      selection: StudioSelection;
+    }
+  | {
+      type: "move-selection";
+      rowDelta: number;
+      columnDelta: number;
+      /** Lifted first when nothing is floating yet — arrow keys can move a
+       * selection without a preceding drag. */
+      selection?: StudioSelection;
+    }
+  | {
+      type: "place-selection";
+      rowOffset: number;
+      columnOffset: number;
+    }
+  | { type: "commit-selection" }
+  | { type: "cancel-selection" }
   | { type: "undo" }
   | { type: "redo" };
 
@@ -101,7 +141,7 @@ function paintCell(
 }
 
 function committedGrid(state: StudioDocumentState): StudioGrid {
-  return state.stroke?.baseline ?? state.grid;
+  return state.float?.baseline ?? state.stroke?.baseline ?? state.grid;
 }
 
 function commitAtomicEdit(
@@ -110,9 +150,9 @@ function commitAtomicEdit(
 ): StudioDocumentState {
   const baseline = committedGrid(state);
   if (baseline === nextGrid || gridsEqual(baseline, nextGrid)) {
-    return state.stroke === null
+    return state.stroke === null && state.float === null
       ? state
-      : { ...state, grid: baseline, stroke: null };
+      : { ...state, grid: baseline, stroke: null, float: null };
   }
 
   return {
@@ -120,6 +160,7 @@ function commitAtomicEdit(
     past: [...state.past, baseline],
     future: [],
     stroke: null,
+    float: null,
     isPristine: false,
   };
 }
@@ -130,6 +171,7 @@ function beginStroke(
   column: number,
   color: StudioCell,
 ): StudioDocumentState {
+  if (state.float !== null) return state;
   if (!isValidCoordinate(state.grid, row, column)) return state;
 
   let nextState = state;
@@ -140,6 +182,7 @@ function beginStroke(
           past: [...state.past, state.stroke.baseline],
           future: [],
           stroke: null,
+          float: null,
           isPristine: false,
         }
       : { ...state, grid: state.stroke.baseline, stroke: null };
@@ -197,6 +240,7 @@ function commitStroke(state: StudioDocumentState): StudioDocumentState {
     past: [...state.past, state.stroke.baseline],
     future: [],
     stroke: null,
+    float: null,
     isPristine: false,
   };
 }
@@ -204,6 +248,67 @@ function commitStroke(state: StudioDocumentState): StudioDocumentState {
 function cancelStroke(state: StudioDocumentState): StudioDocumentState {
   if (state.stroke === null) return state;
   return { ...state, grid: state.stroke.baseline, stroke: null };
+}
+
+function renderFloat(
+  baseline: StudioGrid,
+  contents: readonly StudioSelectionContent[],
+  offset: StudioSelectionOffset,
+): StudioGrid {
+  return stampSelection(clearSelection(baseline, contents), contents, offset);
+}
+
+function liftSelection(
+  state: StudioDocumentState,
+  selection: StudioSelection,
+): StudioDocumentState {
+  if (state.float !== null) return state;
+
+  const baseline = committedGrid(state);
+  const contents = readSelection(baseline, selection);
+  if (contents.length === 0) {
+    return state.stroke === null ? state : cancelStroke(state);
+  }
+
+  const offset = { row: 0, column: 0 };
+  return {
+    ...state,
+    grid: renderFloat(baseline, contents, offset),
+    stroke: null,
+    float: { baseline, contents, offset },
+  };
+}
+
+function offsetFloat(
+  state: StudioDocumentState,
+  offset: StudioSelectionOffset,
+): StudioDocumentState {
+  const { float } = state;
+  if (float === null) return state;
+  if (!Number.isInteger(offset.row) || !Number.isInteger(offset.column)) {
+    return state;
+  }
+  if (
+    offset.row === float.offset.row &&
+    offset.column === float.offset.column
+  ) {
+    return state;
+  }
+
+  return {
+    ...state,
+    grid: renderFloat(float.baseline, float.contents, offset),
+    float: { ...float, offset },
+  };
+}
+
+function commitFloat(state: StudioDocumentState): StudioDocumentState {
+  return state.float === null ? state : commitAtomicEdit(state, state.grid);
+}
+
+function cancelFloat(state: StudioDocumentState): StudioDocumentState {
+  if (state.float === null) return state;
+  return { ...state, grid: state.float.baseline, float: null };
 }
 
 export function createStudioDocument(
@@ -214,8 +319,22 @@ export function createStudioDocument(
     past: [],
     future: [],
     stroke: null,
+    float: null,
     isPristine: true,
   };
+}
+
+/**
+ * Where the floating cells currently sit, for rendering the selection outline.
+ * Includes coordinates outside the grid: those are the implied delete on
+ * commit, and callers can filter them with `selectionWithinGrid`.
+ */
+export function getFloatingSelection(
+  state: StudioDocumentState,
+): StudioSelection | null {
+  const { float } = state;
+  if (float === null) return null;
+  return translateSelection(float.contents, float.offset.row, float.offset.column);
 }
 
 export function canUndo(state: StudioDocumentState): boolean {
@@ -232,7 +351,9 @@ export function studioDocumentReducer(
 ): StudioDocumentState {
   switch (action.type) {
     case "hydrate": {
-      if (!state.isPristine || state.stroke !== null) return state;
+      if (!state.isPristine || state.stroke !== null || state.float !== null) {
+        return state;
+      }
       const grid = tryCloneMatchingGrid(state, action.grid);
       if (grid === null) return state;
       return { ...state, grid };
@@ -274,7 +395,37 @@ export function studioDocumentReducer(
         return state;
       }
     }
+    case "lift-selection":
+      return liftSelection(state, action.selection);
+    case "move-selection": {
+      if (
+        !Number.isInteger(action.rowDelta) ||
+        !Number.isInteger(action.columnDelta)
+      ) {
+        return state;
+      }
+      const lifted =
+        state.float === null && action.selection !== undefined
+          ? liftSelection(state, action.selection)
+          : state;
+      const { float } = lifted;
+      if (float === null) return state;
+      return offsetFloat(lifted, {
+        row: float.offset.row + action.rowDelta,
+        column: float.offset.column + action.columnDelta,
+      });
+    }
+    case "place-selection":
+      return offsetFloat(state, {
+        row: action.rowOffset,
+        column: action.columnOffset,
+      });
+    case "commit-selection":
+      return commitFloat(state);
+    case "cancel-selection":
+      return cancelFloat(state);
     case "undo": {
+      if (state.float !== null) return cancelFloat(state);
       if (state.stroke !== null) return cancelStroke(state);
       const grid = state.past.at(-1);
       if (grid === undefined) return state;
@@ -286,6 +437,7 @@ export function studioDocumentReducer(
       };
     }
     case "redo": {
+      if (state.float !== null) return cancelFloat(state);
       if (state.stroke !== null) return cancelStroke(state);
       const [grid, ...future] = state.future;
       if (grid === undefined) return state;

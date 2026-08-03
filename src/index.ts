@@ -14,10 +14,37 @@ export {
   canRedo,
   canUndo,
   createStudioDocument,
+  getFloatingSelection,
   studioDocumentReducer,
   type StudioDocumentAction,
   type StudioDocumentState,
+  type StudioFloatingSelection,
 } from "./document.ts";
+
+export {
+  addSelectionCell,
+  clearSelection,
+  createSelection,
+  isSelectionContiguous,
+  readSelection,
+  removeSelectionCell,
+  selectionBounds,
+  selectionHas,
+  selectionOutline,
+  selectionRectangle,
+  selectionRegions,
+  selectionWithinGrid,
+  stampSelection,
+  toggleSelectionCell,
+  translateSelection,
+  type StudioSelection,
+  type StudioSelectionBounds,
+  type StudioSelectionCell,
+  type StudioSelectionContent,
+  type StudioSelectionEdge,
+  type StudioSelectionOffset,
+  type StudioSelectionSide,
+} from "./selection.ts";
 
 export {
   bindStudioInput,
@@ -25,6 +52,7 @@ export {
   type StudioInputActions,
   type StudioInputBinding,
   type StudioInputPolicy,
+  type StudioSelectionInputActions,
   type StudioShortcut,
 } from "./input.ts";
 

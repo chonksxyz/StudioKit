@@ -1,6 +1,6 @@
 # Implementing a pixel art studio with Studio
 
-This guide walks through building an editor on Studio from scratch: state, DOM contract, input, shortcuts, image export, persistence, and testing. It ends with framework notes for React.
+This guide walks through building an editor on Studio from scratch: state, DOM contract, input, shortcuts, selections, image export, persistence, and testing. It ends with framework notes for React.
 
 ## 1. Pick your grid and create the document
 
@@ -66,6 +66,8 @@ The action vocabulary:
 | `load` | Replace the whole grid (atomic, undoable) |
 | `affix` | Merge a grid on top; incoming pixels win |
 | `hydrate` | Seed a pristine document without history |
+| `lift-selection` / `move-selection` / `place-selection` | Move a selection of cells; see step 6 |
+| `commit-selection` / `cancel-selection` | Write the moved cells, or put them back |
 
 Use `canUndo(state)` / `canRedo(state)` to enable your toolbar buttons.
 
@@ -80,8 +82,11 @@ const binding = bindStudioInput({
   columns: SIZE.columns,
   getPolicy: () => ({
     overlay: openOverlay,      // "none", or the name of whatever menu/modal is open
-    mode,                      // "draw" | "erase"
+    mode,                      // "draw" | "erase" | "select"
     selectedColor,             // current CSS color
+    // Only needed in select mode — see step 6:
+    isSelected: (row, column) => selectionHas(selection, row, column),
+    hasSelection: selection.length > 0,
   }),
   actions: {
     beginStroke: (row, column, color) => dispatch({ type: "begin-stroke", row, column, color }),
@@ -102,6 +107,7 @@ What the binding does for you:
 
 - **Pointer strokes.** `pointerdown` on a cell begins a stroke with pointer capture; dragging updates it cell by cell (via `elementFromPoint`, so it works across rows); release commits exactly once. `color` is the selected color, or `null` when erasing.
 - **Erase affordances.** Right-click drag erases (without breaking context menus outside the grid). Holding Shift erases. `mode: "erase"` in your policy erases.
+- **Selection gestures.** `mode: "select"` swaps strokes for selection: Shift-click and drag to pick cells, drag a selected cell to move the whole selection, arrow keys to nudge, Enter/Escape to commit or cancel. See step 6.
 - **Touch.** One finger draws; a second finger cancels the stroke and reports pinch factors through `applyPinchScale`.
 - **Safety.** Strokes cancel — never half-commit — on window blur, tab hide, an overlay opening, or `destroy()`. Text selection and the grid's own context menu are suppressed.
 
@@ -137,7 +143,96 @@ Semantics:
 - Shortcuts never fire while the user types in an editable element, unless `allowInEditable` is set.
 - Set `preventDefault` for keys with browser behavior worth suppressing (`/` quick-find in Firefox, `s` in some contexts, etc.).
 
-## 6. Save as an image
+## 6. Select, move, and drop cells
+
+Selection is opt-in: it costs nothing until your policy reports `mode: "select"` and you pass `actions.selection`. Two pieces of state are yours to hold — which cells are selected, and (during a drag) nothing else; the *move* lives in the document as `state.float`.
+
+```ts
+import {
+  createSelection,
+  selectionHas,
+  selectionOutline,
+  selectionRegions,
+  toggleSelectionCell,
+  addSelectionCell,
+  getFloatingSelection,
+} from "@chonksxyz/studio";
+
+let selection = createSelection();
+```
+
+Wire the selection callbacks alongside your stroke actions:
+
+```ts
+actions: {
+  /* …beginStroke, updateStroke, … */
+  selection: {
+    // Pointer down on an unselected cell. Shift adds to the selection;
+    // without Shift, a fresh click starts a new one.
+    beginSelect: (row, column, additive) => {
+      selection = additive
+        ? toggleSelectionCell(selection, row, column)
+        : createSelection([{ row, column }]);
+      render();
+    },
+    // Dragging across cells paints the selection out.
+    extendSelect: (row, column) => {
+      selection = addSelectionCell(selection, row, column);
+      render();
+    },
+    // Pointer down on a cell that is already selected: lift the whole thing.
+    beginMove: () => dispatch({ type: "lift-selection", selection }),
+    // Drag offset in cells, measured from the grabbed cell.
+    moveTo: (rowOffset, columnOffset) =>
+      dispatch({ type: "place-selection", rowOffset, columnOffset }),
+    // Arrow keys. Passing `selection` lifts on the first nudge, so the user can
+    // move a selection with the keyboard alone.
+    nudge: (rowDelta, columnDelta) =>
+      dispatch({ type: "move-selection", rowDelta, columnDelta, selection }),
+    // Enter, or your "Apply" button.
+    commit: () => {
+      dispatch({ type: "commit-selection" });
+      selection = createSelection();
+      render();
+    },
+    // Escape, or your "Cancel" button.
+    cancel: () => {
+      dispatch({ type: "cancel-selection" });
+      selection = createSelection();
+      render();
+    },
+  },
+}
+```
+
+What the binding handles: Shift-click and drag to select (Shift never erases in select mode), pointer-drag of an existing selection with capture, arrow keys to nudge, Enter to commit, Escape to cancel, and ending a drag cleanly on blur or an opening overlay — *without* discarding the selection, which is state, not a modifier. Because `commit` and `cancel` are plain callbacks, the same two lines back your toolbar buttons.
+
+Render the selection from two sources — the cells the user picked, and, while a move is in flight, where they currently sit:
+
+```ts
+function render() {
+  const live = getFloatingSelection(state) ?? selection;
+
+  for (const element of gridElement.children) element.className = "";
+  for (const { row, column } of live) cellAt(row, column)?.classList.add("selected");
+  // Exterior edges only: no seams between neighbouring cells, and a detached or
+  // diagonal cell gets its own ring.
+  for (const { row, column, side } of selectionOutline(live)) {
+    cellAt(row, column)?.classList.add(`edge-${side}`);
+  }
+}
+```
+
+```css
+.selected { transform: scale(1.08); z-index: 1; }  /* lift the picked cells */
+.edge-top { box-shadow: inset 0 2px 0 #fff; }      /* one rule per side */
+```
+
+`getFloatingSelection` includes coordinates that have moved off the canvas — that is the implied delete, and committing drops them. Filter with `selectionWithinGrid(live, SIZE)` if you would rather not iterate them. `selectionRegions` and `isSelectionContiguous` are there when you want to treat a broken-up selection differently (a per-region label, a warning, a different outline color).
+
+One rule to know: a committed float **overwrites** the cells it lands on, and the cells it came from are left empty. Undo restores both in one step.
+
+## 7. Save as an image
 
 ```ts
 import { saveStudioGridImage, studioGridToDataUrl, drawStudioGrid } from "@chonksxyz/studio";
@@ -160,7 +255,7 @@ drawStudioGrid(context, state.grid, { scale: 16 });   // the drawing on top
 
 Output size is `columns × scale` by `rows × scale`, one exact rectangle per cell — no seams, no anti-aliasing.
 
-## 7. Persist designs
+## 8. Persist designs
 
 Serialize your grid however you like (JSON, run-length, a hex colorMap), then let `createDesignStore` own validation, migration, and dedup:
 
@@ -186,7 +281,7 @@ const store = createDesignStore<Saved>({
 
 The `storage` parameter is any `{ getItem, setItem }` pair, so an in-memory map, IndexedDB facade, or server-backed adapter drops in.
 
-## 8. Test without a browser
+## 9. Test without a browser
 
 Everything is injectable, so the whole editor core runs under `node:test`:
 
