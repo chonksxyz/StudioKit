@@ -17,13 +17,27 @@ export type StudioImageEncodingOptions = StudioImageOptions & {
 };
 
 const DEFAULT_SCALE = 16;
+const MAX_CANVAS_DIMENSION = 2 ** 32 - 1;
 
 function resolveScale(scale: number | undefined): number {
   const resolved = scale ?? DEFAULT_SCALE;
-  if (!Number.isFinite(resolved) || resolved <= 0) {
-    throw new Error("Studio image scale must be a positive number");
+  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
+    throw new Error("Studio image scale must be a positive integer");
   }
   return resolved;
+}
+
+function resolveCanvasDimensions(
+  rows: number,
+  columns: number,
+  scale: number,
+): { width: number; height: number } {
+  const width = columns * scale;
+  const height = rows * scale;
+  if (width > MAX_CANVAS_DIMENSION || height > MAX_CANVAS_DIMENSION) {
+    throw new Error("Studio image dimensions exceed the canvas size limit");
+  }
+  return { width, height };
 }
 
 export function drawStudioGrid(
@@ -54,10 +68,11 @@ export function studioGridToDataUrl(
 ): string {
   const { rows, columns } = getGridSize(grid);
   const scale = resolveScale(options.scale);
+  const { width, height } = resolveCanvasDimensions(rows, columns, scale);
   const documentTarget = options.documentTarget ?? globalThis.document;
   const canvas = documentTarget.createElement("canvas");
-  canvas.width = columns * scale;
-  canvas.height = rows * scale;
+  canvas.width = width;
+  canvas.height = height;
 
   const context = canvas.getContext("2d");
   if (!context) return "";

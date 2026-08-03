@@ -74,6 +74,10 @@ test("fills an optional background behind the pixels", () => {
   assert.deepEqual(rects[0], { fillStyle: "#ffffff", x: 0, y: 0, w: 6, h: 4 });
   assert.equal(rects.length, 2);
   assert.throws(() => drawStudioGrid(context, grid, { scale: 0 }), /positive/);
+  assert.throws(
+    () => drawStudioGrid(context, grid, { scale: 1.5 }),
+    /positive integer/,
+  );
 });
 
 test("encodes the grid to a data URL sized from the grid dimensions", () => {
@@ -84,6 +88,14 @@ test("encodes the grid to a data URL sized from the grid dimensions", () => {
 
   assert.equal(dataUrl, "data:image/png;fake,30x20");
   assert.deepEqual(canvases, [canvases[0]]);
+  assert.throws(
+    () =>
+      studioGridToDataUrl(grid, {
+        scale: 2 ** 32,
+        documentTarget,
+      }),
+    /dimensions exceed/,
+  );
 });
 
 test("saves the grid by clicking a download link", () => {

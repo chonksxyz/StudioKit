@@ -8,7 +8,7 @@ export type StudioDesignStoreOptions<Design> = {
   key: string;
   legacyKeys?: readonly string[];
   normalize: (value: unknown) => Design | null;
-  isEqual?: (left: Design, right: Design) => boolean;
+  isEqual: (left: Design, right: Design) => boolean;
 };
 
 export type StudioDesignStore<Design> = {
@@ -17,17 +17,17 @@ export type StudioDesignStore<Design> = {
   remove: (index: number) => Design[];
 };
 
-function defaultIsEqual<Design>(left: Design, right: Design): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
 export function createDesignStore<Design>({
   storage,
   key,
   legacyKeys = [],
   normalize,
-  isEqual = defaultIsEqual,
+  isEqual,
 }: StudioDesignStoreOptions<Design>): StudioDesignStore<Design> {
+  if (typeof isEqual !== "function") {
+    throw new TypeError("Studio design store requires an isEqual function");
+  }
+
   const parse = (value: string): Design[] | null => {
     try {
       const parsed: unknown = JSON.parse(value);
@@ -54,7 +54,7 @@ export function createDesignStore<Design>({
       if (legacy === null) continue;
 
       const migrated = parse(legacy);
-      if (migrated === null) return [];
+      if (migrated === null) continue;
       write(migrated);
       return migrated;
     }

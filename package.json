@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "A dependency-free toolkit for building pixel art studios: configurable grids, undo/redo history, draw and erase input, configurable keyboard shortcuts, image export, and design persistence.",
   "license": "MIT",
+  "packageManager": "yarn@1.22.22",
   "author": "Chonks (https://www.chonks.xyz)",
   "homepage": "https://github.com/chonksxyz/StudioKit#readme",
   "repository": {
@@ -20,8 +21,7 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
-    },
-    "./src/*": "./src/*"
+    }
   },
   "sideEffects": false,
   "files": [
@@ -32,11 +32,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "test": "node --import tsx --test \"tests/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json",
-    "prepublishOnly": "tsc -p tsconfig.build.json",
-    "prepare": "tsc -p tsconfig.build.json"
+    "prepack": "npm test && npm run typecheck && npm run build"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

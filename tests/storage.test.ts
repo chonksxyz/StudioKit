@@ -38,6 +38,19 @@ function createStore(storage: StudioStorage) {
   });
 }
 
+test("requires explicit design equality at construction", () => {
+  assert.throws(
+    () =>
+      // @ts-expect-error Design identity must be explicit.
+      createDesignStore<Design>({
+        storage: createMemoryStorage(),
+        key: "studio:v1",
+        normalize: normalizeDesign,
+      }),
+    /isEqual/,
+  );
+});
+
 test("saves, deduplicates, and rejects invalid designs", () => {
   const storage = createMemoryStorage();
   const store = createStore(storage);
@@ -56,6 +69,26 @@ test("migrates legacy keys and strips fields the normalizer drops", () => {
     studio: JSON.stringify([{ pixels: "abc", stale: "extra" }]),
   });
   const store = createStore(storage);
+
+  assert.deepEqual(store.load(), [{ pixels: "abc" }]);
+  assert.equal(
+    storage.values.get("studio:v1"),
+    JSON.stringify([{ pixels: "abc" }]),
+  );
+});
+
+test("skips malformed legacy payloads and migrates the next valid key", () => {
+  const storage = createMemoryStorage({
+    "studio:broken": "not-json",
+    "studio:older": JSON.stringify([{ pixels: "abc" }]),
+  });
+  const store = createDesignStore<Design>({
+    storage,
+    key: "studio:v1",
+    legacyKeys: ["studio:broken", "studio:older"],
+    normalize: normalizeDesign,
+    isEqual: (left, right) => left.pixels === right.pixels,
+  });
 
   assert.deepEqual(store.load(), [{ pixels: "abc" }]);
   assert.equal(

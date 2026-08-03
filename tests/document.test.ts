@@ -77,6 +77,45 @@ test("drops no-op strokes and restores cancelled strokes", () => {
   assert.equal(cancelled.past.length, 0);
 });
 
+test("tracks changed cells without rescanning the stroke baseline", () => {
+  const initial = createStudioDocument(createGrid(SIZE));
+  const oneChanged = studioDocumentReducer(initial, {
+    type: "begin-stroke",
+    row: 3,
+    column: 5,
+    color: "#111111",
+  });
+  assert.equal(oneChanged.stroke?.changedCells, 1);
+
+  const twoChanged = studioDocumentReducer(oneChanged, {
+    type: "update-stroke",
+    row: 3,
+    column: 4,
+    color: "#222222",
+  });
+  assert.equal(twoChanged.stroke?.changedCells, 2);
+
+  const oneReverted = studioDocumentReducer(twoChanged, {
+    type: "update-stroke",
+    row: 3,
+    column: 5,
+    color: null,
+  });
+  assert.equal(oneReverted.stroke?.changedCells, 1);
+
+  const fullyReverted = studioDocumentReducer(oneReverted, {
+    type: "update-stroke",
+    row: 3,
+    column: 4,
+    color: null,
+  });
+  assert.equal(fullyReverted.stroke?.changedCells, 0);
+  assert.equal(
+    studioDocumentReducer(fullyReverted, { type: "commit-stroke" }).past.length,
+    0,
+  );
+});
+
 test("new edits after undo truncate the redo branch", () => {
   const state = reduce(
     createStudioDocument(createGrid(SIZE)),
@@ -113,6 +152,27 @@ test("clear, recolor, load, and affix are atomic and undoable", () => {
   assert.deepEqual(
     studioDocumentReducer(cleared, { type: "undo" }).grid,
     affixed.grid,
+  );
+});
+
+test("avoids allocating history for no-op recolors", () => {
+  const initial = createStudioDocument(gridWith([0, 0, "#111111"]));
+
+  assert.equal(
+    studioDocumentReducer(initial, {
+      type: "recolor",
+      from: "#222222",
+      to: "#333333",
+    }),
+    initial,
+  );
+  assert.equal(
+    studioDocumentReducer(initial, {
+      type: "recolor",
+      from: "#111111",
+      to: "#111111",
+    }),
+    initial,
   );
 });
 
@@ -158,4 +218,11 @@ test("ignores grids whose dimensions do not match the document", () => {
     }),
     state,
   );
+});
+
+test("ignores unknown actions from untyped callers", () => {
+  const state = createStudioDocument(createGrid(SIZE));
+  const action = { type: "unknown" } as unknown as StudioDocumentAction;
+
+  assert.equal(studioDocumentReducer(state, action), state);
 });
