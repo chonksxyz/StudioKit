@@ -95,3 +95,100 @@ export function saveStudioGridImage(
   link.click();
   return true;
 }
+
+export type StudioSvgOptions = StudioImageOptions & {
+  /** One element per line, indented — for humans. Default is compact. */
+  pretty?: boolean;
+};
+
+export type StudioSvgEncodingOptions = StudioSvgOptions & {
+  documentTarget?: Document;
+};
+
+/* Cells are "any CSS color string", so colors are sanitized before landing in
+ * an XML attribute — a malformed color must produce a broken fill, never break
+ * out of the attribute or the document. Characters XML 1.0 forbids outright
+ * (C0 controls except tab/newline/return, U+FFFE/FFFF, lone surrogates) are
+ * dropped, since escaping cannot make them well-formed. */
+const XML_ILLEGAL =
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+function escapeSvgAttribute(value: string): string {
+  return value
+    .replace(XML_ILLEGAL, "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+export function studioGridToSvg(
+  grid: StudioGrid,
+  options: StudioSvgOptions = {},
+): string {
+  const { rows, columns } = getGridSize(grid);
+  const scale = resolveScale(options.scale);
+  const width = columns * scale;
+  const height = rows * scale;
+
+  /* shape-rendering="crispEdges" keeps adjacent cells seamless at any zoom —
+   * the SVG counterpart of the exact fillRect edges in drawStudioGrid. */
+  const openTag = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">`;
+
+  const parts: string[] = [];
+
+  if (options.backgroundColor) {
+    parts.push(
+      `<rect width="${width}" height="${height}" fill="${escapeSvgAttribute(options.backgroundColor)}"/>`,
+    );
+  }
+
+  /* Horizontal runs of the same color collapse into one rect. Cells tile, so
+   * merged shapes render identically even for semi-transparent colors. Runs
+   * compare colors as exact strings — "#f00" and "#ff0000" stay separate
+   * rects, which only costs bytes, never fidelity. The typeof check (rather
+   * than === null) skips holes and non-string cells in type-invalid grids,
+   * matching the canvas path's tolerance of them. */
+  grid.forEach((row, y) => {
+    for (let x = 0; x < row.length; ) {
+      const color = row[x];
+      if (typeof color !== "string") {
+        x += 1;
+        continue;
+      }
+      let end = x + 1;
+      while (end < row.length && row[end] === color) end += 1;
+      parts.push(
+        `<rect x="${x * scale}" y="${y * scale}" width="${(end - x) * scale}" height="${scale}" fill="${escapeSvgAttribute(color)}"/>`,
+      );
+      x = end;
+    }
+  });
+
+  if (!options.pretty) return `${openTag}${parts.join("")}</svg>`;
+  const children = parts.map((part) => `  ${part}\n`).join("");
+  return `${openTag}\n${children}</svg>`;
+}
+
+export function studioGridToSvgDataUrl(
+  grid: StudioGrid,
+  options: StudioSvgOptions = {},
+): string {
+  const svg = studioGridToSvg(grid, options);
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+export function saveStudioGridSvg(
+  grid: StudioGrid,
+  options: StudioSvgEncodingOptions & { fileName?: string } = {},
+): boolean {
+  const dataUrl = studioGridToSvgDataUrl(grid, options);
+  const documentTarget = options.documentTarget ?? globalThis.document;
+  const link = documentTarget.createElement("a");
+  link.download = options.fileName ?? "studio.svg";
+  link.href = dataUrl;
+  link.click();
+  /* Returns boolean for symmetry with saveStudioGridImage, though SVG
+   * serialization has no canvas-context failure mode. */
+  return true;
+}

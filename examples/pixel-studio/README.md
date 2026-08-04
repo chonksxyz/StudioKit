@@ -1,6 +1,6 @@
 # Pixel studio (Hono)
 
-A 30×30 pixel editor built on Studio, served by [Hono](https://hono.dev). It exercises the whole toolkit: a six-swatch palette, draw and erase strokes, an eyedropper, undo/redo, PNG export, and shift-click multi-selection with drag-to-move.
+A 30×30 pixel editor built on Studio, served by [Hono](https://hono.dev). It exercises the whole toolkit: a six-swatch palette, draw and erase strokes, an eyedropper, undo/redo, PNG and SVG export (with a markup viewer), and shift-click multi-selection with drag-to-move.
 
 ```sh
 cd examples/pixel-studio
@@ -22,6 +22,7 @@ Use `npm start` on its own when `dist/` is already built.
 | Right-click drag | Erase without switching tools |
 | `⌘Z` / `⌘⇧Z` | Undo / redo |
 | `S` | Save a PNG |
+| `G` | Save an SVG |
 
 ### Selection
 
@@ -43,5 +44,5 @@ Empty cells can't be selected — that rule is the app's, not the library's: `be
 
 ## What to read
 
-- `public/app.js` — the whole editor in one file: document dispatch, the render loop, and every `bindStudioInput` callback including `actions.selection`.
+- `public/app.js` — the whole editor in one file: document dispatch, the render loop, and every `bindStudioInput` callback including `actions.selection`. The "View SVG" dialog doubles as the overlay-scoping demo: while it is open, `getPolicy` reports `overlay: "svg-dialog"`, so every canvas shortcut goes quiet.
 - `server.js` — 30 lines of Hono serving `public/` plus `dist/` under `/studio`.

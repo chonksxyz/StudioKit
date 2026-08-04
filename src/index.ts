@@ -60,10 +60,15 @@ export {
 export {
   drawStudioGrid,
   saveStudioGridImage,
+  saveStudioGridSvg,
   studioGridToDataUrl,
+  studioGridToSvg,
+  studioGridToSvgDataUrl,
   type StudioFillContext,
   type StudioImageEncodingOptions,
   type StudioImageOptions,
+  type StudioSvgEncodingOptions,
+  type StudioSvgOptions,
 } from "./image.ts";
 
 export {

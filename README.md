@@ -14,7 +14,7 @@ Studio was extracted from [Chonks Studio](https://www.chonks.xyz/studio), the pi
 - **Draw and erase.** Pointer gestures with pointer capture: left-click paints, right-click erases, holding Shift erases (unless you hand Shift to selections instead), two-finger touch becomes pinch-to-zoom. Fast drags interpolate, so a quick flick paints a connected line instead of a dotted one. Gestures cancel safely on blur, tab-hide, and unmount.
 - **Select, drag, and drop cells.** Shift-click or drag out a multi-cell selection, move it with the pointer or the arrow keys, recolor it, delete it, and commit it as one undo entry. Selections outline as a single shape, cells carried off the canvas are deleted, and Escape puts everything back.
 - **Keyboard shortcuts you configure.** Declare your own key map, scope shortcuts to overlays (menus, modals), and Studio handles the rest: undo/redo on `⌘Z`/`⌘⇧Z`, staying out of the way while the user types in a text field, and never shadowing system shortcuts like paste.
-- **Save as an image.** Render any grid to a PNG data URL or trigger a download, at a configurable integer pixel scale, with an optional background color — using only the native canvas API.
+- **Save as an image.** Render any grid to a PNG data URL, an SVG string, or trigger a download of either, at a configurable integer pixel scale, with an optional background color — using only the native canvas API (and none at all for SVG).
 - **Persistence.** A tiny versioned design store over any `localStorage`-shaped backend, with validation, migration from legacy keys, and deduplication.
 - **Fully testable without a browser.** Every module accepts injected targets (window, document, storage, canvas), so the whole editor core runs under `node:test`.
 
@@ -127,7 +127,7 @@ cd examples/pixel-studio && npm install && npm run dev
 | `document` | `createStudioDocument`, `studioDocumentReducer`, `canUndo`, `canRedo` — the pure document reducer with stroke-grained history |
 | `selection` | `createSelection`, `toggleSelectionCell`, `selectionOutline`, `selectionRegions`, `fillSelection`, `stampSelection` — the pure selection model and its outline geometry |
 | `input` | `bindStudioInput` — delegated pointer gestures plus your configurable shortcut map |
-| `image` | `drawStudioGrid`, `studioGridToDataUrl`, `saveStudioGridImage` — canvas-based export and download |
+| `image` | `drawStudioGrid`, `studioGridToDataUrl`, `saveStudioGridImage`, `studioGridToSvg`, `studioGridToSvgDataUrl`, `saveStudioGridSvg` — PNG and SVG export and download |
 | `storage` | `createDesignStore` — versioned, validated persistence over any storage adapter |
 
 Every module is independent — use only the pieces you need.
@@ -268,6 +268,18 @@ saveStudioGridImage(state.grid, {
 
 // Or get a data URL (transparent background by default):
 const dataUrl = studioGridToDataUrl(state.grid, { scale: 32 });
+```
+
+For a scalable vector export, the same options produce an SVG — horizontal runs of same-colored cells merge into single `<rect>`s, rendered with crisp edges at any zoom, no canvas involved:
+
+```ts
+import { saveStudioGridSvg, studioGridToSvg, studioGridToSvgDataUrl } from "@chonksxyz/studio";
+
+saveStudioGridSvg(state.grid, { scale: 16, fileName: "my-pixel-art.svg" });
+
+const markup = studioGridToSvg(state.grid, { scale: 16 });               // "<svg …>…</svg>"
+const svgUrl = studioGridToSvgDataUrl(state.grid, { scale: 16 });        // for <img src>
+const readable = studioGridToSvg(state.grid, { pretty: true });          // one element per line
 ```
 
 For layered exports (backgrounds, sprites underneath the drawing), use `drawStudioGrid(context, grid, options)` directly on your own canvas between your other draw calls.

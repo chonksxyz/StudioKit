@@ -11,11 +11,13 @@ import {
   isSelectionContiguous,
   removeSelectionCell,
   saveStudioGridImage,
+  saveStudioGridSvg,
   selectionHas,
   selectionOutline,
   selectionRegions,
   selectionWithinGrid,
   studioDocumentReducer,
+  studioGridToSvg,
   toggleSelectionCell,
 } from "/studio/index.js";
 
@@ -43,6 +45,8 @@ const gridElement = document.querySelector("#grid");
 const paletteElement = document.querySelector("#palette");
 const statusElement = document.querySelector("#selection-status");
 const toolButtons = [...document.querySelectorAll("[data-tool]")];
+const svgDialog = document.querySelector("#svg-dialog");
+const svgMarkupElement = document.querySelector("#svg-markup");
 
 function dispatch(action) {
   const next = studioDocumentReducer(state, action);
@@ -225,8 +229,10 @@ const binding = bindStudioInput({
   columns: SIZE.columns,
   getPolicy: () => ({
     // The sampler is modelled as an overlay: Studio stays out of the way and
-    // this app's own pointerdown listener reads the color underneath.
-    overlay: tool === "pick" ? "picker" : "none",
+    // this app's own pointerdown listener reads the color underneath. The SVG
+    // dialog is a real overlay — while it is open, no canvas shortcut declares
+    // it, so they all go quiet.
+    overlay: svgDialog.open ? "svg-dialog" : tool === "pick" ? "picker" : "none",
     mode: tool === "select" ? "select" : tool === "erase" ? "erase" : "draw",
     selectedColor,
     isSelected: (row, column) => selectionHas(selection, row, column),
@@ -309,6 +315,12 @@ const binding = bindStudioInput({
       preventDefault: true,
       run: () => saveStudioGridImage(state.grid, { scale: 16, fileName: "studio.png" }),
     },
+    {
+      key: "g",
+      overlays: ["none", "picker"],
+      preventDefault: true,
+      run: () => saveStudioGridSvg(state.grid, { scale: 16, fileName: "studio.svg" }),
+    },
   ],
 });
 
@@ -335,6 +347,38 @@ document.querySelector("#clear").addEventListener("click", () => {
 document.querySelector("#save").addEventListener("click", () =>
   saveStudioGridImage(state.grid, { scale: 16, fileName: "studio.png" }),
 );
+document.querySelector("#save-svg").addEventListener("click", () =>
+  saveStudioGridSvg(state.grid, { scale: 16, fileName: "studio.svg" }),
+);
+document.querySelector("#view-svg").addEventListener("click", () => {
+  // Open before serializing: syncPolicy sees the dialog as an overlay and
+  // cancels any in-flight stroke, so the markup matches the settled grid.
+  svgDialog.showModal();
+  binding.syncPolicy();
+  svgMarkupElement.value = studioGridToSvg(state.grid, { scale: 16, pretty: true });
+});
+const copyButton = document.querySelector("#copy-svg");
+let copyResetTimer;
+svgDialog.addEventListener("close", () => {
+  binding.syncPolicy();
+  clearTimeout(copyResetTimer);
+  copyButton.textContent = "Copy";
+});
+copyButton.addEventListener("click", async () => {
+  clearTimeout(copyResetTimer);
+  try {
+    await navigator.clipboard.writeText(svgMarkupElement.value);
+    copyButton.textContent = "Copied!";
+    copyResetTimer = setTimeout(() => (copyButton.textContent = "Copy"), 1500);
+  } catch {
+    // Clipboard access needs a secure context and permission — when denied,
+    // select the markup so a manual copy is one keystroke away. The hint
+    // stays until the dialog closes.
+    svgMarkupElement.focus();
+    svgMarkupElement.select();
+    copyButton.textContent = "Press Ctrl+C";
+  }
+});
 document.querySelector("#apply").addEventListener("click", applySelection);
 document.querySelector("#delete").addEventListener("click", deleteSelection);
 document.querySelector("#cancel").addEventListener("click", cancelSelection);
