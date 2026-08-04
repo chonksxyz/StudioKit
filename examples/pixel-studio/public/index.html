@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Studio — 30×30 pixel studio</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <h1>Pixel studio</h1>
+        <p class="subtitle">
+          30×30 · paint, erase, sample, and shift-click to select and drag
+        </p>
+      </header>
+
+      <section class="toolbar" aria-label="Tools">
+        <div class="group" role="group" aria-label="Tool">
+          <button type="button" data-tool="draw">Draw <kbd>D</kbd></button>
+          <button type="button" data-tool="erase">Erase <kbd>E</kbd></button>
+          <button type="button" data-tool="select">Select <kbd>V</kbd></button>
+          <button type="button" data-tool="pick">Sample <kbd>I</kbd></button>
+        </div>
+
+        <div class="group palette" id="palette" role="group" aria-label="Swatches"></div>
+
+        <div class="group" role="group" aria-label="History">
+          <button type="button" id="undo">Undo</button>
+          <button type="button" id="redo">Redo</button>
+          <button type="button" id="clear">Clear</button>
+          <button type="button" id="save">Save PNG</button>
+        </div>
+      </section>
+
+      <section class="stage">
+        <div class="grid" id="grid" aria-label="Canvas"></div>
+
+        <aside class="sidebar">
+          <h2>Selection</h2>
+          <p class="hint" id="selection-status">Nothing selected.</p>
+          <div class="group vertical">
+            <button type="button" id="apply">Apply move <kbd>↵</kbd></button>
+            <button type="button" id="cancel">Cancel <kbd>Esc</kbd></button>
+          </div>
+          <h2>How it works</h2>
+          <ul class="hint">
+            <li><strong>Shift-click</strong> cells to add them to a selection; shift-click a selected cell to drop it.</li>
+            <li><strong>Shift-drag</strong> to sweep a run of cells in or out in one gesture.</li>
+            <li>Let go of Shift — the selection stays. <strong>Drag any selected cell</strong> to move the whole shape, or nudge it with the <strong>arrow keys</strong>.</li>
+            <li>Moved pixels <strong>overwrite</strong> what they land on. Anything pushed off the canvas is <strong>deleted</strong> on apply.</li>
+            <li><strong>Apply</strong> writes the move as one undo step; <strong>Cancel</strong> puts everything back.</li>
+          </ul>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

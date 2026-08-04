@@ -111,6 +111,14 @@ const binding = bindStudioInput({
 // Call binding.destroy() when tearing the editor down.
 ```
 
+## Example
+
+[`examples/pixel-studio`](examples/pixel-studio) is a runnable 30×30 editor on Hono — palette, draw, erase, eyedropper, undo/redo, PNG export, and shift-click selection drag — with no bundler and no client dependencies.
+
+```sh
+cd examples/pixel-studio && npm install && npm run dev
+```
+
 ## Modules
 
 | Module | What it gives you |
