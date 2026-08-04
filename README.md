@@ -11,8 +11,8 @@ Studio was extracted from [Chonks Studio](https://www.chonks.xyz/studio), the pi
 - **Zero dependencies.** Plain TypeScript. No React, no canvas library, no build-time magic. Works with React, Vue, Svelte, or vanilla DOM.
 - **A grid you define.** Any rectangular dimensions — 16×16, 30×30, 64×32. Cells are valid CSS color strings or `null` (empty).
 - **History built in.** A pure reducer models the document: every brush stroke commits as exactly one undo entry, cancelled strokes roll back cleanly, and atomic edits (clear, recolor, load, affix) are each one history step.
-- **Draw and erase.** Pointer gestures with pointer capture: left-click paints, right-click erases, holding Shift erases, two-finger touch becomes pinch-to-zoom. Fast drags interpolate, so a quick flick paints a connected line instead of a dotted one. Gestures cancel safely on blur, tab-hide, and unmount.
-- **Select, drag, and drop cells.** Shift-click or drag out a multi-cell selection, move it with the pointer or the arrow keys, and commit it as one undo entry. Selections outline as a single shape, cells carried off the canvas are deleted, and Escape puts everything back.
+- **Draw and erase.** Pointer gestures with pointer capture: left-click paints, right-click erases, holding Shift erases (unless you hand Shift to selections instead), two-finger touch becomes pinch-to-zoom. Fast drags interpolate, so a quick flick paints a connected line instead of a dotted one. Gestures cancel safely on blur, tab-hide, and unmount.
+- **Select, drag, and drop cells.** Shift-click or drag out a multi-cell selection, move it with the pointer or the arrow keys, recolor it, delete it, and commit it as one undo entry. Selections outline as a single shape, cells carried off the canvas are deleted, and Escape puts everything back.
 - **Keyboard shortcuts you configure.** Declare your own key map, scope shortcuts to overlays (menus, modals), and Studio handles the rest: undo/redo on `⌘Z`/`⌘⇧Z`, staying out of the way while the user types in a text field, and never shadowing system shortcuts like paste.
 - **Save as an image.** Render any grid to a PNG data URL or trigger a download, at a configurable integer pixel scale, with an optional background color — using only the native canvas API.
 - **Persistence.** A tiny versioned design store over any `localStorage`-shaped backend, with validation, migration from legacy keys, and deduplication.
@@ -175,6 +175,47 @@ selectionRegions(selection);        // [[{0,0}], [{1,1}]] for a diagonal pair
 isSelectionContiguous(selection);   // false
 ```
 
+### Shift: erase or select
+
+Shift can't do both jobs, so which one it does is your call — a policy flag, not a hardcoded key.
+
+**By default nothing changes:** holding Shift is still temporary erase, exactly as before. Selections then need `mode: "select"`, a dedicated tool where plain clicks select and Shift adds to the selection.
+
+**Set `shiftSelects: true`** and Shift selects in *every* tool. The user shift-clicks cells while still holding a brush, lets go of Shift — the selection stays, because it's state, not a modifier — and drags any selected cell to move the whole shape. No tool change to move pixels.
+
+What that costs, and what it doesn't:
+
+- Shift **stops erasing** wherever it selects. That's the trade, and it's the whole point of the flag.
+- Erasing is not lost: **right-click drag** still erases, and `mode: "erase"` still erases.
+- `onTemporaryEraseChange` then only reports the right-click override, since Shift no longer contributes.
+- The selection keys arm whenever `hasSelection` is true, so arrows/Enter/Escape/Delete work without leaving the drawing tool.
+
+```ts
+getPolicy: () => ({
+  overlay: "none",
+  mode,                       // "draw" | "erase" | "select"
+  selectedColor,
+  shiftSelects: true,         // Shift selects instead of erasing
+  isSelected: (row, column) => selectionHas(selection, row, column),
+  hasSelection: selection.length > 0,
+}),
+```
+
+The gestures Studio then handles, reporting each through `actions.selection`:
+
+| Gesture | What it does |
+| --- | --- |
+| Shift-click a cell | `beginSelect(row, column, additive)` — add it, or drop it if it was already in |
+| Shift-drag | `extendSelect` per cell, sweeping a run in or out; fast drags fill the cells between pointer samples |
+| Drag a selected cell | Move the whole selection (no Shift — `endMove` can commit on drop, so nothing needs confirming) |
+| Arrow keys | Nudge by one cell, lifting on the first press so the keyboard alone can move a selection |
+| `Enter` / `Escape` | Commit or cancel |
+| `Delete` / `Backspace` | Empty the selected cells — only if you wire the optional `delete` handler, otherwise those keys stay native |
+
+Studio reports the gestures; what each one does to your selection stays your decision. The example toggles a cell on shift-click, sweeps additively on shift-drag, and only admits painted cells at all — by checking `grid[row][column] !== null` inside `beginSelect` and `extendSelect`.
+
+### Moving, recoloring, and deleting
+
 Moving a selection runs through the document reducer, so the whole move is one undo entry:
 
 | Action | Effect |
@@ -187,6 +228,8 @@ Moving a selection runs through the document reducer, so the whole move is one u
 | `cancel-selection` | Restore the pre-lift grid |
 
 Two behaviours worth knowing: a float **overwrites** what it lands on, and cells moved past the grid edge are **dropped** — moving pixels off the canvas deletes them. `getFloatingSelection(state)` returns the float's current coordinates (including off-canvas ones) so you can outline it while it moves; `selectionWithinGrid` filters them to what will survive the commit.
+
+`fill-selection` recolors in place, and mid-move it repaints the cells in flight rather than landing them — so a move plus a recolor still commits as one history entry. To empty cells instead, `fillSelection(grid, selection, null)` — which is exactly what `clearSelection` is — through a `load`.
 
 ## Keyboard shortcuts
 
@@ -208,9 +251,8 @@ Your `getPolicy()` reports the current overlay (`"none"` means the canvas is foc
 - Typing in an `input`, `textarea`, `select`, or contenteditable never triggers shortcuts (except `allowInEditable` ones, like Escape-to-close).
 - `⌘Z`/`Ctrl+Z` undoes and `⌘⇧Z`/`Ctrl+Shift+Z` redoes, always with `preventDefault`.
 - Other system chords (`⌘C`, `⌘V`, `Alt+…`) pass through untouched.
-- Holding Shift temporarily switches to erase. `onTemporaryEraseChange` reports the aggregate Shift/right-click override state.
-- Set `shiftSelects: true` in your policy and Shift selects instead: Shift-drag builds a selection in any tool, a plain drag from a selected cell moves it, and the selection keys stay armed — so a drawing user never switches tools to move pixels. (`mode: "select"` does the same without the Shift, for a dedicated selection tool.)
-- With something selected, the arrow keys move the selection, Enter commits it, Escape cancels it, and Delete/Backspace empty the selected cells (only if you wire a `delete` handler — otherwise those keys stay native).
+- Holding Shift temporarily switches to erase, unless `shiftSelects` or `mode: "select"` gives Shift to selections instead — see [Shift: erase or select](#shift-erase-or-select). `onTemporaryEraseChange` reports the aggregate Shift/right-click override state.
+- With something selected, the arrow keys move the selection, Enter commits it, Escape cancels it, and Delete/Backspace empty the selected cells (the last only if you wire a `delete` handler — otherwise those keys stay native).
 
 ## Saving images
 
