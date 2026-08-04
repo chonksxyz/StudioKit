@@ -84,9 +84,10 @@ const binding = bindStudioInput({
     overlay: openOverlay,      // "none", or the name of whatever menu/modal is open
     mode,                      // "draw" | "erase" | "select"
     selectedColor,             // current CSS color
-    // Only needed in select mode — see step 6:
+    // Only needed for selections — see step 6:
     isSelected: (row, column) => selectionHas(selection, row, column),
     hasSelection: selection.length > 0,
+    shiftSelects: true,        // Shift selects instead of erasing
   }),
   actions: {
     beginStroke: (row, column, color) => dispatch({ type: "begin-stroke", row, column, color }),
@@ -145,7 +146,12 @@ Semantics:
 
 ## 6. Select, move, and drop cells
 
-Selection is opt-in: it costs nothing until your policy reports `mode: "select"` and you pass `actions.selection`. Two pieces of state are yours to hold — which cells are selected, and (during a drag) nothing else; the *move* lives in the document as `state.float`.
+Selection is opt-in: it costs nothing until you pass `actions.selection` and your policy asks for it. There are two ways to ask, and they compose:
+
+- **`shiftSelects: true`** — Shift selects instead of erasing, in whatever tool the user already has. Shift-drag builds a selection; a plain drag from a selected cell moves it. Nobody changes tools to move pixels.
+- **`mode: "select"`** — a dedicated selection tool, where plain clicks select and Shift adds.
+
+Only one piece of state is yours to hold: which cells are selected. The *move* lives in the document as `state.float`.
 
 ```ts
 import {
@@ -185,6 +191,9 @@ actions: {
     // Drag offset in cells, measured from the grabbed cell.
     moveTo: (rowOffset, columnOffset) =>
       dispatch({ type: "place-selection", rowOffset, columnOffset }),
+    // Dropping can commit on its own — no confirmation step for the common
+    // gesture. Leave this as a plain re-render if you want an explicit Apply.
+    endMove: () => dispatch({ type: "commit-selection" }),
     // Arrow keys. Passing `selection` lifts on the first nudge, so the user can
     // move a selection with the keyboard alone.
     nudge: (rowDelta, columnDelta) =>
@@ -205,7 +214,9 @@ actions: {
 }
 ```
 
-What the binding handles: Shift-click and drag to select (Shift never erases in select mode), pointer-drag of an existing selection with capture, arrow keys to nudge, Enter to commit, Escape to cancel, and ending a drag cleanly on blur or an opening overlay — *without* discarding the selection, which is state, not a modifier. Because `commit` and `cancel` are plain callbacks, the same two lines back your toolbar buttons.
+What the binding handles: Shift-click and drag to select (Shift never erases where it selects), pointer-drag of an existing selection with capture, arrow keys to nudge, Enter to commit, Escape to cancel, and ending a drag cleanly on blur or an opening overlay — *without* discarding the selection, which is state, not a modifier. Because `commit` and `cancel` are plain callbacks, the same two lines back your toolbar buttons.
+
+Which cells may be selected is your call, not Studio's: the example only lets painted cells in, by checking `state.grid[row][column] !== null` inside `beginSelect` and `extendSelect`.
 
 Render the selection from two sources — the cells the user picked, and, while a move is in flight, where they currently sit:
 

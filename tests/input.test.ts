@@ -151,6 +151,7 @@ function bind(options: {
   mode?: () => "draw" | "erase" | "select";
   isSelected?: (row: number, column: number) => boolean;
   hasSelection?: () => boolean;
+  shiftSelects?: boolean;
 }): Binding {
   return bindStudioInput({
     grid: (options.grid ?? new FakeGrid()) as unknown as HTMLElement,
@@ -166,6 +167,7 @@ function bind(options: {
       selectedColor: "#123456",
       isSelected: options.isSelected,
       hasSelection: options.hasSelection?.() ?? false,
+      shiftSelects: options.shiftSelects,
     }),
     actions: createActions(options.actions),
     shortcuts: options.shortcuts,
@@ -1020,4 +1022,119 @@ test("ends a selection drag on blur without discarding the selection", () => {
   assert.deepEqual(calls, ["begin-move:1,1", "end-move"]);
   binding.destroy();
   assert.deepEqual(calls, ["begin-move:1,1", "end-move"]);
+});
+
+test("shift selects instead of erasing while drawing", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const documentTarget = new FakeDocument();
+  const first = cell(1, 1);
+  const second = cell(1, 2);
+  grid.cells.add(first);
+  grid.cells.add(second);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    documentTarget,
+    shiftSelects: true,
+    actions: {
+      beginStroke: (row, column) => calls.push(`draw:${row},${column}`),
+      onTemporaryEraseChange: (active) => calls.push(`erase:${active}`),
+      selection: selectionActions(calls),
+    },
+  });
+
+  // Shift down no longer arms the eraser…
+  windowTarget.emit("keydown", keyboardEvent("Shift", { tagName: "BODY" }));
+  // …it selects, and keeps selecting across a drag.
+  grid.emit("pointerdown", pointerEvent(first, { shiftKey: true }));
+  documentTarget.hitTarget = second;
+  grid.emit("pointermove", pointerEvent(second, { shiftKey: true }));
+  windowTarget.emit("pointerup", pointerEvent(second, { buttons: 0 }));
+  // An unshifted click on empty canvas still draws.
+  grid.emit("pointerdown", pointerEvent(second));
+
+  assert.deepEqual(calls, [
+    "begin-select:1,1:true",
+    "extend-select:1,2:true",
+    "end-select",
+    "draw:1,2",
+  ]);
+  binding.destroy();
+});
+
+test("drags a selection from the drawing tool without holding shift", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const documentTarget = new FakeDocument();
+  const grabbed = cell(1, 1);
+  const dropped = cell(2, 1);
+  grid.cells.add(grabbed);
+  grid.cells.add(dropped);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    documentTarget,
+    shiftSelects: true,
+    isSelected: (row, column) => row === 1 && column === 1,
+    actions: {
+      beginStroke: (row, column) => calls.push(`draw:${row},${column}`),
+      selection: selectionActions(calls),
+    },
+  });
+
+  grid.emit("pointerdown", pointerEvent(grabbed));
+  documentTarget.hitTarget = dropped;
+  grid.emit("pointermove", pointerEvent(dropped));
+  windowTarget.emit("pointerup", pointerEvent(dropped, { buttons: 0 }));
+
+  assert.deepEqual(calls, ["begin-move:1,1", "move-to:1,0", "end-move"]);
+  binding.destroy();
+});
+
+test("arms the selection keys outside select mode when shift selects", () => {
+  const windowTarget = new FakeEventTarget();
+  const calls: string[] = [];
+  let hasSelection = true;
+  const binding = bind({
+    windowTarget,
+    shiftSelects: true,
+    hasSelection: () => hasSelection,
+    actions: { selection: selectionActions(calls) },
+  });
+  const body = { tagName: "BODY" };
+
+  windowTarget.emit("keydown", keyboardEvent("ArrowDown", body));
+  windowTarget.emit("keydown", keyboardEvent("Escape", body));
+  hasSelection = false;
+  windowTarget.emit("keydown", keyboardEvent("ArrowDown", body));
+
+  assert.deepEqual(calls, ["nudge:1,0", "cancel"]);
+  binding.destroy();
+});
+
+test("leaves shift erasing when shift-select is not enabled", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const target = cell(1, 1);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    isSelected: () => true,
+    actions: {
+      beginStroke: (row, column, color) => calls.push(`draw:${row},${column}:${color}`),
+      onTemporaryEraseChange: (active) => calls.push(`erase:${active}`),
+      selection: selectionActions(calls),
+    },
+  });
+
+  windowTarget.emit("keydown", keyboardEvent("Shift", { tagName: "BODY" }));
+  grid.emit("pointerdown", pointerEvent(target, { shiftKey: true }));
+
+  assert.deepEqual(calls, ["erase:true", "draw:1,1:null"]);
+  binding.destroy();
 });

@@ -8,6 +8,13 @@ export type StudioInputPolicy = {
   isSelected?: (row: number, column: number) => boolean;
   /** Whether anything is selected, which arms the selection keys. */
   hasSelection?: boolean;
+  /**
+   * Make Shift select instead of erase, in every mode. Shift-drag builds a
+   * selection, dragging a selected cell moves it, and the selection keys stay
+   * armed — so a draw-mode user never changes tools to move pixels. Off by
+   * default: Shift keeps erasing.
+   */
+  shiftSelects?: boolean;
 };
 
 export type StudioSelectionInputActions = {
@@ -321,7 +328,15 @@ export function bindStudioInput({
     const coordinates = cellCoordinates(event.target);
     if (!coordinates) return;
 
-    if (policy.mode === "select") {
+    // Shift starts a selection, and — once something is selected — a plain drag
+    // from one of its cells moves it, without leaving the drawing tool.
+    const shiftSelects = policy.shiftSelects === true;
+    if (
+      policy.mode === "select" ||
+      (shiftSelects &&
+        (event.shiftKey ||
+          (policy.isSelected?.(coordinates.row, coordinates.column) ?? false)))
+    ) {
       beginSelectionGesture(event, policy, coordinates);
       return;
     }
@@ -359,7 +374,10 @@ export function bindStudioInput({
     if (selectionGesture !== null && event.pointerId === selectionGesture.pointerId) {
       const gesture = selectionGesture;
       const policy = getPolicy();
-      if (policy.overlay !== CLOSED_OVERLAY || policy.mode !== "select") {
+      if (
+        policy.overlay !== CLOSED_OVERLAY ||
+        (policy.mode !== "select" && policy.shiftSelects !== true)
+      ) {
         finishSelectionGesture();
         return;
       }
@@ -486,13 +504,14 @@ export function bindStudioInput({
       return;
     }
 
+    const selects = policy.mode === "select" || policy.shiftSelects === true;
     if (event.key === "Shift" && !hasSystemModifier) {
-      // In select mode Shift adds to the selection instead of erasing.
-      if (policy.mode !== "select") setEraseModifiers(true, rightClickErase);
+      // Where Shift selects, it must not also erase.
+      if (!selects) setEraseModifiers(true, rightClickErase);
       return;
     }
     if (
-      policy.mode === "select" &&
+      selects &&
       policy.hasSelection === true &&
       actions.selection &&
       !hasSystemModifier

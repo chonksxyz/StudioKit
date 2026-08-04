@@ -162,9 +162,7 @@ function renderChrome(floating) {
 function describeSelection(floating) {
   const cellsChosen = floating ?? selection;
   if (cellsChosen.length === 0) {
-    return tool === "select"
-      ? "Shift-click cells to start a selection."
-      : "Nothing selected. Press V for the select tool.";
+    return "Shift-click a painted cell to start a selection.";
   }
 
   const shape = isSelectionContiguous(cellsChosen)
@@ -183,9 +181,16 @@ function describeSelection(floating) {
 }
 
 // --- Selection actions -----------------------------------------------------
+// Only painted cells can be selected — shift-clicking bare canvas does nothing.
+const isPainted = (row, column) => state.grid[row][column] !== null;
+
+// Dropping the cells writes them. The selection stays on the pixels it moved,
+// so the next drag picks up where this one left off.
 function applySelection() {
+  if (state.float === null) return;
+  const landed = selectionWithinGrid(getFloatingSelection(state), SIZE);
   dispatch({ type: "commit-selection" });
-  selection = createSelection();
+  selection = landed;
   render();
 }
 
@@ -208,10 +213,20 @@ const binding = bindStudioInput({
     selectedColor,
     isSelected: (row, column) => selectionHas(selection, row, column),
     hasSelection: selection.length > 0,
+    // Shift selects instead of erasing, in every tool.
+    shiftSelects: true,
   }),
   actions: {
-    beginStroke: (row, column, color) =>
-      dispatch({ type: "begin-stroke", row, column, color }),
+    beginStroke: (row, column, color) => {
+      // Drawing lands any selection that is still in flight and clears it —
+      // painting elsewhere means the user is done with those cells.
+      applySelection();
+      if (selection.length > 0) {
+        selection = createSelection();
+        render();
+      }
+      dispatch({ type: "begin-stroke", row, column, color });
+    },
     updateStroke: (row, column, color) =>
       dispatch({ type: "update-stroke", row, column, color }),
     commitStroke: () => dispatch({ type: "commit-stroke" }),
@@ -220,11 +235,13 @@ const binding = bindStudioInput({
     redo: () => dispatch({ type: "redo" }),
     selection: {
       beginSelect: (row, column, additive) => {
-        // Starting a new selection drops whatever was still floating.
-        if (state.float !== null) dispatch({ type: "commit-selection" });
+        // Starting a new selection lands whatever was still in flight.
+        applySelection();
         dragRemoves = additive && selectionHas(selection, row, column);
         if (dragRemoves) {
           selection = removeSelectionCell(selection, row, column);
+        } else if (!isPainted(row, column)) {
+          if (!additive) selection = createSelection();
         } else {
           selection = additive
             ? toggleSelectionCell(selection, row, column)
@@ -235,16 +252,19 @@ const binding = bindStudioInput({
       // Sweeping continues whatever the gesture started as, so a shift-drag
       // across selected cells removes the run instead of flickering it.
       extendSelect: (row, column) => {
-        selection = dragRemoves
-          ? removeSelectionCell(selection, row, column)
-          : addSelectionCell(selection, row, column);
+        if (dragRemoves) {
+          selection = removeSelectionCell(selection, row, column);
+        } else if (isPainted(row, column)) {
+          selection = addSelectionCell(selection, row, column);
+        }
         render();
       },
       endSelect: () => render(),
       beginMove: () => dispatch({ type: "lift-selection", selection }),
       moveTo: (rowOffset, columnOffset) =>
         dispatch({ type: "place-selection", rowOffset, columnOffset }),
-      endMove: () => render(),
+      // Dropping commits: no confirmation step for the common gesture.
+      endMove: () => applySelection(),
       // Passing the selection lifts on the first nudge, so the arrow keys work
       // without a drag first.
       nudge: (rowDelta, columnDelta) =>

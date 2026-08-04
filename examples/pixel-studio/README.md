@@ -27,14 +27,17 @@ Use `npm start` on its own when `dist/` is already built.
 
 | | |
 | --- | --- |
-| Shift-click | Add a cell — or remove it, if it was already selected |
-| Shift-drag | Sweep a run of cells in or out in one gesture |
-| Drag a selected cell | Move the whole selection (Shift is not needed — the selection persists) |
+| Shift-click | Add a painted cell — or remove it, if it was already selected. Shift selects in every tool; it never erases |
+| Shift-drag | Sweep a run of cells in, or out if the drag started on a selected cell |
+| Drag a selected cell | Move the whole selection (no Shift needed — the selection persists) |
+| Drop | Commits the move as a single undo entry, and the selection stays on the pixels it moved |
 | Arrow keys | Nudge the selection one cell, lifting it on the first press |
-| `↵` / Apply | Write the move into the grid as a single undo entry |
+| `↵` / Apply | Land an arrow-key move now (drawing or selecting elsewhere lands it too) |
 | `Esc` / Cancel | Put everything back |
 
-Selected cells scale up slightly, and the marquee traces only the *exterior* edges of the shape — contiguous cells share no seam, while diagonal or detached cells each get their own ring. A move overwrites the cells it lands on, and anything pushed past the canvas edge is deleted on apply (the sidebar counts them first).
+Selected cells scale up slightly, and the marquee traces only the *exterior* edges of the shape — contiguous cells share no seam, while diagonal or detached cells each get their own ring. A move overwrites the cells it lands on, and anything pushed past the canvas edge is deleted (the sidebar counts them before it lands).
+
+Empty cells can't be selected — that rule is the app's, not the library's: `beginSelect` and `extendSelect` check `state.grid[row][column] !== null`.
 
 ## What to read
 

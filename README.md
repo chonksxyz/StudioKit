@@ -207,8 +207,9 @@ Your `getPolicy()` reports the current overlay (`"none"` means the canvas is foc
 - Typing in an `input`, `textarea`, `select`, or contenteditable never triggers shortcuts (except `allowInEditable` ones, like Escape-to-close).
 - `⌘Z`/`Ctrl+Z` undoes and `⌘⇧Z`/`Ctrl+Shift+Z` redoes, always with `preventDefault`.
 - Other system chords (`⌘C`, `⌘V`, `Alt+…`) pass through untouched.
-- Holding Shift temporarily switches to erase — except in `mode: "select"`, where Shift adds to the selection instead. `onTemporaryEraseChange` reports the aggregate Shift/right-click override state.
-- In `mode: "select"` with something selected, the arrow keys move the selection, Enter commits it, and Escape cancels it.
+- Holding Shift temporarily switches to erase. `onTemporaryEraseChange` reports the aggregate Shift/right-click override state.
+- Set `shiftSelects: true` in your policy and Shift selects instead: Shift-drag builds a selection in any tool, a plain drag from a selected cell moves it, and the selection keys stay armed — so a drawing user never switches tools to move pixels. (`mode: "select"` does the same without the Shift, for a dedicated selection tool.)
+- With something selected, the arrow keys move the selection, Enter commits it, and Escape cancels it.
 
 ## Saving images
 

@@ -45,11 +45,12 @@
           </div>
           <h2>How it works</h2>
           <ul class="hint">
-            <li><strong>Shift-click</strong> cells to add them to a selection; shift-click a selected cell to drop it.</li>
-            <li><strong>Shift-drag</strong> to sweep a run of cells in or out in one gesture.</li>
-            <li>Let go of Shift — the selection stays. <strong>Drag any selected cell</strong> to move the whole shape, or nudge it with the <strong>arrow keys</strong>.</li>
-            <li>Moved pixels <strong>overwrite</strong> what they land on. Anything pushed off the canvas is <strong>deleted</strong> on apply.</li>
-            <li><strong>Apply</strong> writes the move as one undo step; <strong>Cancel</strong> puts everything back.</li>
+            <li><strong>Shift-click</strong> a painted cell to select it — in any tool, Shift selects rather than erases. Bare canvas has nothing to pick up.</li>
+            <li><strong>Shift-drag</strong> to sweep a run of cells in, or shift-drag from a selected cell to sweep them back out.</li>
+            <li>Let go of Shift — the selection stays. <strong>Drag any selected cell</strong> to move the whole shape.</li>
+            <li><strong>Dropping commits</strong> the move as one undo step, and the selection stays on the pixels it moved.</li>
+            <li>The <strong>arrow keys</strong> nudge a selection too; those land when you draw, select something else, or press <kbd>↵</kbd>.</li>
+            <li>Moved pixels <strong>overwrite</strong> what they land on, and anything pushed off the canvas is <strong>deleted</strong>. <strong>Cancel</strong> before it lands to put everything back.</li>
           </ul>
         </aside>
       </section>
