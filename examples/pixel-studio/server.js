@@ -33,6 +33,7 @@ app.use(
 );
 app.use("/*", serveStatic({ root: from(join(here, "public")) }));
 
-serve({ fetch: app.fetch, port }, (info) => {
+// 0.0.0.0 so the app is reachable when it runs inside a container or VM.
+serve({ fetch: app.fetch, port, hostname: "0.0.0.0" }, (info) => {
   console.log(`Pixel studio running at http://localhost:${info.port}`);
 });
