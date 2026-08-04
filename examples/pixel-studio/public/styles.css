@@ -1,0 +1,202 @@
+:root {
+  --bg: #14161a;
+  --panel: #1d2026;
+  --panel-raised: #262a32;
+  --line: #343a45;
+  --text: #e7e9ee;
+  --muted: #9aa2b1;
+  --accent: #6ea8ff;
+  --marquee: #00e0ff;
+  --cell: 20px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 32px 24px 48px;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.app {
+  margin: 0 auto;
+  max-width: 1080px;
+  display: grid;
+  gap: 20px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: 0.01em;
+}
+
+h2 {
+  margin: 20px 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+h2:first-child {
+  margin-top: 0;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.group {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.group.vertical {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 7px 11px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--panel-raised);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--line);
+}
+
+button[aria-pressed="true"] {
+  background: var(--accent);
+  color: #0d1117;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+kbd {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  font: 11px/1.4 ui-monospace, monospace;
+}
+
+button[aria-pressed="true"] kbd {
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.palette {
+  gap: 5px;
+}
+
+.swatch {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 7px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.swatch[aria-pressed="true"] {
+  border-color: var(--accent);
+}
+
+.stage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(30, var(--cell));
+  grid-template-rows: repeat(30, var(--cell));
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background-color: #0f1115;
+  background-image:
+    linear-gradient(45deg, #191c22 25%, transparent 25%),
+    linear-gradient(-45deg, #191c22 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #191c22 75%),
+    linear-gradient(-45deg, transparent 75%, #191c22 75%);
+  background-size: 20px 20px;
+  background-position: 8px 8px, 8px 18px, 18px -2px, -2px 8px;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+
+.cell {
+  width: var(--cell);
+  height: var(--cell);
+  outline: 1px solid rgba(255, 255, 255, 0.05);
+  outline-offset: -1px;
+  transition: transform 90ms ease-out;
+}
+
+/* The user's picked cells lift slightly, so a selection reads before it moves. */
+.cell.selected {
+  transform: scale(1.12);
+  z-index: 2;
+  outline-color: transparent;
+}
+
+.cell.floating {
+  z-index: 3;
+}
+
+.sidebar {
+  flex: 1 1 260px;
+  min-width: 240px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+}
+
+ul.hint {
+  padding-left: 18px;
+}
+
+ul.hint li + li {
+  margin-top: 8px;
+}
+
+#selection-status {
+  margin-bottom: 12px;
+  color: var(--text);
+}

@@ -1,0 +1,15 @@
+{
+  "name": "studio-example-pixel-studio",
+  "private": true,
+  "type": "module",
+  "description": "A 30x30 pixel studio on Hono, demonstrating paint, erase, sample, and shift-click selection drag",
+  "scripts": {
+    "build:studio": "npm --prefix ../.. install && npm --prefix ../.. run build",
+    "start": "node server.js",
+    "dev": "npm run build:studio && node server.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.14"
+  }
+}

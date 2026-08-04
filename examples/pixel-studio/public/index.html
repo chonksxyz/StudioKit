@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Studio — 30×30 pixel studio</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <h1>Pixel studio</h1>
+        <p class="subtitle">
+          30×30 · paint, erase, sample, and shift-click to select and drag
+        </p>
+      </header>
+
+      <section class="toolbar" aria-label="Tools">
+        <div class="group" role="group" aria-label="Tool">
+          <button type="button" data-tool="draw">Draw <kbd>D</kbd></button>
+          <button type="button" data-tool="erase">Erase <kbd>E</kbd></button>
+          <button type="button" data-tool="select">Select <kbd>V</kbd></button>
+          <button type="button" data-tool="pick">Sample <kbd>I</kbd></button>
+        </div>
+
+        <div class="group palette" id="palette" role="group" aria-label="Swatches"></div>
+
+        <div class="group" role="group" aria-label="History">
+          <button type="button" id="undo">Undo</button>
+          <button type="button" id="redo">Redo</button>
+          <button type="button" id="clear">Clear</button>
+          <button type="button" id="save">Save PNG</button>
+        </div>
+      </section>
+
+      <section class="stage">
+        <div class="grid" id="grid" aria-label="Canvas"></div>
+
+        <aside class="sidebar">
+          <h2>Selection</h2>
+          <p class="hint" id="selection-status">Nothing selected.</p>
+          <div class="group vertical">
+            <button type="button" id="apply">Apply move <kbd>↵</kbd></button>
+            <button type="button" id="delete">Delete cells <kbd>Del</kbd></button>
+            <button type="button" id="cancel">Cancel <kbd>Esc</kbd></button>
+          </div>
+          <h2>How it works</h2>
+          <ul class="hint">
+            <li><strong>Shift-click</strong> a painted cell to select it — in any tool, Shift selects rather than erases. Bare canvas has nothing to pick up.</li>
+            <li><strong>Shift-drag</strong> to sweep a run of cells in, or shift-drag from a selected cell to sweep them back out.</li>
+            <li>Let go of Shift — the selection stays. <strong>Drag any selected cell</strong> to move the whole shape.</li>
+            <li><strong>Dropping commits</strong> the move as one undo step and ends the selection, so the next stroke draws normally.</li>
+            <li>The <strong>arrow keys</strong> nudge a selection too; those land when you draw, select something else, or press <kbd>↵</kbd>.</li>
+            <li>With cells selected, <strong>clicking a swatch recolors them</strong> — the selection stays, so try a few.</li>
+            <li><kbd>Del</kbd> or <kbd>⌫</kbd> empties the selected cells and clears the selection — one undo step.</li>
+            <li>Moved pixels <strong>overwrite</strong> what they land on, and anything pushed off the canvas is <strong>deleted</strong>. <strong>Cancel</strong> before it lands to put everything back.</li>
+          </ul>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,7 +1,7 @@
 {
   "name": "@chonksxyz/studio",
-  "version": "0.1.1",
-  "description": "A dependency-free toolkit for building pixel art studios: configurable grids, undo/redo history, draw and erase input, configurable keyboard shortcuts, image export, and design persistence.",
+  "version": "0.2.0",
+  "description": "A dependency-free toolkit for building pixel art studios: configurable grids, undo/redo history, draw and erase input, multi-cell selection with drag-to-move, configurable keyboard shortcuts, image export, and design persistence.",
   "license": "MIT",
   "packageManager": "yarn@1.22.22",
   "author": "Chonks (https://www.chonks.xyz)",
@@ -36,6 +36,7 @@
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "test": "node --import tsx --test \"tests/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json",
+    "prepare": "tsc -p tsconfig.build.json",
     "prepack": "npm test && npm run typecheck && npm run build"
   },
   "devDependencies": {
@@ -52,6 +53,7 @@
     "drawing",
     "canvas",
     "grid",
+    "selection",
     "undo",
     "keyboard-shortcuts"
   ]
