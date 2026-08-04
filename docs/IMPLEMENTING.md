@@ -256,13 +256,28 @@ One rule to know: a committed float **overwrites** the cells it lands on, and th
 ## 7. Save as an image
 
 ```ts
-import { saveStudioGridImage, studioGridToDataUrl, drawStudioGrid } from "@chonksxyz/studio";
+import {
+  saveStudioGridImage,
+  saveStudioGridSvg,
+  studioGridToDataUrl,
+  studioGridToSvg,
+  studioGridToSvgDataUrl,
+  drawStudioGrid,
+} from "@chonksxyz/studio";
 
-// One-liner download:
+// One-liner downloads:
 saveStudioGridImage(state.grid, { scale: 16, fileName: "drawing.png" });
+saveStudioGridSvg(state.grid, { scale: 16, fileName: "drawing.svg" });
 
 // Data URL for previews or uploads (transparent unless you pass backgroundColor):
 const url = studioGridToDataUrl(state.grid, { scale: 16, backgroundColor: "#f5f5f5" });
+
+// Or the raw SVG markup, if you'd rather inline or post-process it.
+// Compact by default; pass pretty: true for one element per line:
+const markup = studioGridToSvg(state.grid, { scale: 16, pretty: true });
+
+// SVG data URL for <img src> previews, mirroring studioGridToDataUrl:
+const svgUrl = studioGridToSvgDataUrl(state.grid, { scale: 16 });
 
 // Layered composition on your own canvas:
 const canvas = document.createElement("canvas");
@@ -274,7 +289,7 @@ drawBackdrop(context);                                // your layers underneath
 drawStudioGrid(context, state.grid, { scale: 16 });   // the drawing on top
 ```
 
-Output size is `columns × scale` by `rows × scale`, one exact rectangle per cell — no seams, no anti-aliasing.
+Output size is `columns × scale` by `rows × scale`, one exact rectangle per cell — no seams, no anti-aliasing. The SVG variants emit one `<rect>` per horizontal run of same-colored cells with `shape-rendering="crispEdges"`, so the export stays compact and seamless at any zoom.
 
 ## 8. Persist designs
 

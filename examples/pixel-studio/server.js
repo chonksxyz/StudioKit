@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
@@ -15,6 +15,17 @@ if (!existsSync(join(studioDist, "index.js"))) {
       "(or `npm run dev` here, which does it for you).",
   );
   process.exit(1);
+}
+
+// A stale dist/ fails at module-link time in the browser (missing exports),
+// which takes the whole page down — warn while the fix is still obvious.
+const studioSrc = join(here, "..", "..", "src");
+const builtAt = statSync(join(studioDist, "index.js")).mtimeMs;
+const isStale = readdirSync(studioSrc).some(
+  (file) => file.endsWith(".ts") && statSync(join(studioSrc, file)).mtimeMs > builtAt,
+);
+if (isStale) {
+  console.warn("Warning: dist/ is older than src/ — run `npm run dev` to rebuild.");
 }
 
 // serveStatic resolves `root` against process.cwd(), so keep the paths relative.

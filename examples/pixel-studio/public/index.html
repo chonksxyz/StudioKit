@@ -30,6 +30,8 @@
           <button type="button" id="redo">Redo</button>
           <button type="button" id="clear">Clear</button>
           <button type="button" id="save">Save PNG</button>
+          <button type="button" id="save-svg">Save SVG</button>
+          <button type="button" id="view-svg">View SVG</button>
         </div>
       </section>
 
@@ -58,6 +60,16 @@
         </aside>
       </section>
     </main>
+
+    <dialog id="svg-dialog" aria-labelledby="svg-dialog-title">
+      <h2 id="svg-dialog-title">SVG markup</h2>
+      <p class="hint">The drawing as SVG, formatted for reading — "Save SVG" downloads the same image in compact form.</p>
+      <textarea id="svg-markup" aria-label="SVG markup" readonly spellcheck="false" wrap="off"></textarea>
+      <form method="dialog" class="dialog-actions">
+        <button type="button" id="copy-svg">Copy</button>
+        <button type="submit">Close <kbd>Esc</kbd></button>
+      </form>
+    </dialog>
 
     <script type="module" src="/app.js"></script>
   </body>
