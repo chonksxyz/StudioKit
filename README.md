@@ -209,7 +209,7 @@ Your `getPolicy()` reports the current overlay (`"none"` means the canvas is foc
 - Other system chords (`⌘C`, `⌘V`, `Alt+…`) pass through untouched.
 - Holding Shift temporarily switches to erase. `onTemporaryEraseChange` reports the aggregate Shift/right-click override state.
 - Set `shiftSelects: true` in your policy and Shift selects instead: Shift-drag builds a selection in any tool, a plain drag from a selected cell moves it, and the selection keys stay armed — so a drawing user never switches tools to move pixels. (`mode: "select"` does the same without the Shift, for a dedicated selection tool.)
-- With something selected, the arrow keys move the selection, Enter commits it, and Escape cancels it.
+- With something selected, the arrow keys move the selection, Enter commits it, Escape cancels it, and Delete/Backspace empty the selected cells (only if you wire a `delete` handler — otherwise those keys stay native).
 
 ## Saving images
 

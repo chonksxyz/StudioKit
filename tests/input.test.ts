@@ -1138,3 +1138,59 @@ test("leaves shift erasing when shift-select is not enabled", () => {
   assert.deepEqual(calls, ["erase:true", "draw:1,1:null"]);
   binding.destroy();
 });
+
+test("deletes the selected cells on Delete or Backspace", () => {
+  const windowTarget = new FakeEventTarget();
+  const calls: string[] = [];
+  const prevented: string[] = [];
+  let hasSelection = true;
+  const binding = bind({
+    windowTarget,
+    shiftSelects: true,
+    hasSelection: () => hasSelection,
+    actions: {
+      selection: { ...selectionActions(calls), delete: () => calls.push("delete") },
+    },
+  });
+  const body = { tagName: "BODY" };
+  const press = (key: string) =>
+    windowTarget.emit(
+      "keydown",
+      keyboardEvent(key, body, { preventDefault: () => prevented.push(key) }),
+    );
+
+  press("Delete");
+  press("Backspace");
+
+  // With nothing selected both keys stay native — no handler, no preventDefault.
+  hasSelection = false;
+  press("Delete");
+  press("Backspace");
+
+  assert.deepEqual(calls, ["delete", "delete"]);
+  assert.deepEqual(prevented, ["Delete", "Backspace"]);
+  binding.destroy();
+});
+
+test("leaves Delete alone when no delete handler is wired", () => {
+  const windowTarget = new FakeEventTarget();
+  const calls: string[] = [];
+  const prevented: string[] = [];
+  const binding = bind({
+    windowTarget,
+    shiftSelects: true,
+    hasSelection: () => true,
+    actions: { selection: selectionActions(calls) },
+  });
+
+  windowTarget.emit(
+    "keydown",
+    keyboardEvent("Delete", { tagName: "BODY" }, {
+      preventDefault: () => prevented.push("Delete"),
+    }),
+  );
+
+  assert.deepEqual(calls, []);
+  assert.deepEqual(prevented, []);
+  binding.destroy();
+});

@@ -33,6 +33,7 @@ Use `npm start` on its own when `dist/` is already built.
 | Drop | Commits the move as a single undo entry, and the selection stays on the pixels it moved |
 | Arrow keys | Nudge the selection one cell, lifting it on the first press |
 | `↵` / Apply | Land an arrow-key move now (drawing or selecting elsewhere lands it too) |
+| `Del` / `⌫` / Delete cells | Empty the selected cells and clear the selection — one undo entry |
 | `Esc` / Cancel | Put everything back |
 
 Selected cells scale up slightly, and the marquee traces only the *exterior* edges of the shape — contiguous cells share no seam, while diagonal or detached cells each get their own ring. A move overwrites the cells it lands on, and anything pushed past the canvas edge is deleted (the sidebar counts them before it lands).

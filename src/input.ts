@@ -36,6 +36,9 @@ export type StudioSelectionInputActions = {
   commit: () => void;
   /** Put everything back (Escape, or your own button). */
   cancel: () => void;
+  /** Empty the selected cells (Delete or Backspace). Optional: without it,
+   * those keys keep their native behaviour. */
+  delete?: () => void;
 };
 
 export type StudioShortcut = {
@@ -530,6 +533,16 @@ export function bindStudioInput({
       if (event.key === "Escape") {
         event.preventDefault();
         actions.selection.cancel();
+        return;
+      }
+      if (
+        (event.key === "Delete" || event.key === "Backspace") &&
+        actions.selection.delete
+      ) {
+        // Backspace navigates back in some browsers — never let it, with cells
+        // selected and a handler wired.
+        event.preventDefault();
+        actions.selection.delete();
         return;
       }
     }

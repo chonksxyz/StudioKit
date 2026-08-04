@@ -41,6 +41,7 @@
           <p class="hint" id="selection-status">Nothing selected.</p>
           <div class="group vertical">
             <button type="button" id="apply">Apply move <kbd>↵</kbd></button>
+            <button type="button" id="delete">Delete cells <kbd>Del</kbd></button>
             <button type="button" id="cancel">Cancel <kbd>Esc</kbd></button>
           </div>
           <h2>How it works</h2>
@@ -50,6 +51,7 @@
             <li>Let go of Shift — the selection stays. <strong>Drag any selected cell</strong> to move the whole shape.</li>
             <li><strong>Dropping commits</strong> the move as one undo step, and the selection stays on the pixels it moved.</li>
             <li>The <strong>arrow keys</strong> nudge a selection too; those land when you draw, select something else, or press <kbd>↵</kbd>.</li>
+            <li><kbd>Del</kbd> or <kbd>⌫</kbd> empties the selected cells and clears the selection — one undo step.</li>
             <li>Moved pixels <strong>overwrite</strong> what they land on, and anything pushed off the canvas is <strong>deleted</strong>. <strong>Cancel</strong> before it lands to put everything back.</li>
           </ul>
         </aside>

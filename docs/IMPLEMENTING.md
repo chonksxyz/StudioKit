@@ -204,6 +204,13 @@ actions: {
       selection = createSelection();
       render();
     },
+    // Delete or Backspace, with cells selected. Omit it and those keys keep
+    // their native behaviour.
+    delete: () => {
+      dispatch({ type: "load", grid: clearSelection(state.grid, selection) });
+      selection = createSelection();
+      render();
+    },
     // Escape, or your "Cancel" button.
     cancel: () => {
       dispatch({ type: "cancel-selection" });

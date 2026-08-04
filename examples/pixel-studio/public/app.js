@@ -3,6 +3,7 @@ import {
   bindStudioInput,
   canRedo,
   canUndo,
+  clearSelection,
   createGrid,
   createSelection,
   createStudioDocument,
@@ -153,6 +154,7 @@ function renderChrome(floating) {
   document.querySelector("#undo").disabled = !canUndo(state);
   document.querySelector("#redo").disabled = !canRedo(state);
   document.querySelector("#apply").disabled = state.float === null;
+  document.querySelector("#delete").disabled = selection.length === 0;
   document.querySelector("#cancel").disabled =
     state.float === null && selection.length === 0;
 
@@ -191,6 +193,18 @@ function applySelection() {
   const landed = selectionWithinGrid(getFloatingSelection(state), SIZE);
   dispatch({ type: "commit-selection" });
   selection = landed;
+  render();
+}
+
+// Delete empties the selected cells wherever they currently sit — one undo
+// entry — and drops the selection with them.
+function deleteSelection() {
+  if (selection.length === 0) return;
+  // Put a move back first, so the pixels are deleted from where they started
+  // rather than leaving a copy behind.
+  if (state.float !== null) dispatch({ type: "cancel-selection" });
+  dispatch({ type: "load", grid: clearSelection(state.grid, selection) });
+  selection = createSelection();
   render();
 }
 
@@ -271,6 +285,7 @@ const binding = bindStudioInput({
         dispatch({ type: "move-selection", rowDelta, columnDelta, selection }),
       commit: applySelection,
       cancel: cancelSelection,
+      delete: deleteSelection,
     },
   },
   shortcuts: [
@@ -317,6 +332,7 @@ document.querySelector("#save").addEventListener("click", () =>
   saveStudioGridImage(state.grid, { scale: 16, fileName: "studio.png" }),
 );
 document.querySelector("#apply").addEventListener("click", applySelection);
+document.querySelector("#delete").addEventListener("click", deleteSelection);
 document.querySelector("#cancel").addEventListener("click", cancelSelection);
 
 render();
