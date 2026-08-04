@@ -278,17 +278,29 @@ function withCell(
   return next;
 }
 
-/** Empty every selected cell, leaving untouched rows referentially identical. */
-export function clearSelection(
+/**
+ * Paint every selected cell one color, leaving untouched rows referentially
+ * identical. Coordinates outside the grid are ignored.
+ */
+export function fillSelection(
   grid: StudioGrid,
   selection: StudioSelection,
+  color: StudioCell,
 ): StudioGrid {
   const { rows, columns } = getGridSize(grid);
   let next = grid;
   for (const { row, column } of selection) {
-    next = withCell(next, row, column, null, rows, columns);
+    next = withCell(next, row, column, color, rows, columns);
   }
   return next;
+}
+
+/** Empty every selected cell — `fillSelection` with no color. */
+export function clearSelection(
+  grid: StudioGrid,
+  selection: StudioSelection,
+): StudioGrid {
+  return fillSelection(grid, selection, null);
 }
 
 /**

@@ -498,3 +498,76 @@ test("lifts on the first nudge so arrow keys work without a drag", () => {
     state,
   );
 });
+
+test("recolors a selection as one undoable edit", () => {
+  const state = reduce(createStudioDocument(createGrid(SIZE)), {
+    type: "load",
+    grid: gridWith([1, 1, "#aaaaaa"], [1, 2, "#bbbbbb"], [2, 2, "#cccccc"]),
+  });
+  const selection = [
+    { row: 1, column: 1 },
+    { row: 1, column: 2 },
+  ];
+
+  const filled = reduce(state, {
+    type: "fill-selection",
+    selection,
+    color: "#dddddd",
+  });
+  assert.equal(filled.grid[1][1], "#dddddd");
+  assert.equal(filled.grid[1][2], "#dddddd");
+  assert.equal(filled.grid[2][2], "#cccccc");
+  assert.equal(filled.past.length, state.past.length + 1);
+  assert.deepEqual(
+    studioDocumentReducer(filled, { type: "undo" }).grid,
+    state.grid,
+  );
+
+  // Filling with the color already there is not an edit.
+  assert.equal(
+    studioDocumentReducer(filled, {
+      type: "fill-selection",
+      selection,
+      color: "#dddddd",
+    }),
+    filled,
+  );
+  // Nor is filling nothing.
+  assert.equal(
+    studioDocumentReducer(filled, {
+      type: "fill-selection",
+      selection: [],
+      color: "#eeeeee",
+    }),
+    filled,
+  );
+});
+
+test("recolors a floating selection without ending the move", () => {
+  const state = reduce(createStudioDocument(createGrid(SIZE)), {
+    type: "load",
+    grid: gridWith([1, 1, "#aaaaaa"]),
+  });
+  const selection = [{ row: 1, column: 1 }];
+
+  const floating = reduce(
+    state,
+    { type: "lift-selection", selection },
+    { type: "move-selection", rowDelta: 1, columnDelta: 1 },
+    { type: "fill-selection", selection, color: "#dddddd" },
+  );
+
+  // Still in flight, in the new color, and no history entry of its own.
+  assert.notEqual(floating.float, null);
+  assert.equal(floating.grid[2][2], "#dddddd");
+  assert.equal(floating.grid[1][1], null);
+  assert.equal(floating.past.length, state.past.length);
+
+  const committed = reduce(floating, { type: "commit-selection" });
+  assert.equal(committed.grid[2][2], "#dddddd");
+  assert.equal(committed.past.length, state.past.length + 1);
+  assert.deepEqual(
+    studioDocumentReducer(committed, { type: "undo" }).grid,
+    state.grid,
+  );
+});

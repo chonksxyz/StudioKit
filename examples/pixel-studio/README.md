@@ -33,6 +33,7 @@ Use `npm start` on its own when `dist/` is already built.
 | Drop | Commits the move as a single undo entry and ends the selection, so the next stroke draws |
 | Arrow keys | Nudge the selection one cell, lifting it on the first press |
 | `↵` / Apply | Land an arrow-key move now (drawing or selecting elsewhere lands it too) |
+| Click a swatch | Recolor the selected cells — one undo entry, and the selection stays |
 | `Del` / `⌫` / Delete cells | Empty the selected cells and clear the selection — one undo entry |
 | `Esc` / Cancel | Put everything back |
 

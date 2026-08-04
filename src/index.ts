@@ -25,6 +25,7 @@ export {
   addSelectionCell,
   clearSelection,
   createSelection,
+  fillSelection,
   isSelectionContiguous,
   readSelection,
   removeSelectionCell,

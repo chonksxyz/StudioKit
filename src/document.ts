@@ -10,6 +10,7 @@ import {
 } from "./grid.ts";
 import {
   clearSelection,
+  fillSelection,
   readSelection,
   stampSelection,
   translateSelection,
@@ -92,6 +93,11 @@ export type StudioDocumentAction =
       type: "place-selection";
       rowOffset: number;
       columnOffset: number;
+    }
+  | {
+      type: "fill-selection";
+      selection: StudioSelection;
+      color: StudioCell;
     }
   | { type: "commit-selection" }
   | { type: "cancel-selection" }
@@ -302,6 +308,30 @@ function offsetFloat(
   };
 }
 
+/**
+ * Recolor the selected cells. While a selection is floating this repaints the
+ * cells in flight — they keep moving, in the new color — so the move still
+ * commits as one entry rather than splitting into a fill plus a move.
+ */
+function fillSelectionCells(
+  state: StudioDocumentState,
+  selection: StudioSelection,
+  color: StudioCell,
+): StudioDocumentState {
+  const { float } = state;
+  if (float !== null) {
+    const contents = float.contents.map((cell) => ({ ...cell, color }));
+    return {
+      ...state,
+      grid: renderFloat(float.baseline, contents, float.offset),
+      float: { ...float, contents },
+    };
+  }
+
+  const baseline = committedGrid(state);
+  return commitAtomicEdit(state, fillSelection(baseline, selection, color));
+}
+
 function commitFloat(state: StudioDocumentState): StudioDocumentState {
   return state.float === null ? state : commitAtomicEdit(state, state.grid);
 }
@@ -420,6 +450,8 @@ export function studioDocumentReducer(
         row: action.rowOffset,
         column: action.columnOffset,
       });
+    case "fill-selection":
+      return fillSelectionCells(state, action.selection, action.color);
     case "commit-selection":
       return commitFloat(state);
     case "cancel-selection":

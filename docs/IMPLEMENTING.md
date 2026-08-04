@@ -67,6 +67,7 @@ The action vocabulary:
 | `affix` | Merge a grid on top; incoming pixels win |
 | `hydrate` | Seed a pristine document without history |
 | `lift-selection` / `move-selection` / `place-selection` | Move a selection of cells; see step 6 |
+| `fill-selection` | Recolor the selected cells |
 | `commit-selection` / `cancel-selection` | Write the moved cells, or put them back |
 
 Use `canUndo(state)` / `canRedo(state)` to enable your toolbar buttons.

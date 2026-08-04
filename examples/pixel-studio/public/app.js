@@ -83,6 +83,11 @@ for (const [index, { name, color }] of PALETTE.entries()) {
 function selectColor(color) {
   selectedColor = color;
   if (tool === "erase") setTool("draw");
+  // With cells selected, picking a swatch recolors them. The selection stays,
+  // so trying a few colors in a row is one click each.
+  if (selection.length > 0) {
+    dispatch({ type: "fill-selection", selection, color });
+  }
   render();
 }
 

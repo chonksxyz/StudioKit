@@ -125,7 +125,7 @@ cd examples/pixel-studio && npm install && npm run dev
 | --- | --- |
 | `grid` | `createGrid`, `cloneGrid`, `mergeGrids`, `gridsEqual`, `getGridSize` — immutable helpers for rectangular grids of any size |
 | `document` | `createStudioDocument`, `studioDocumentReducer`, `canUndo`, `canRedo` — the pure document reducer with stroke-grained history |
-| `selection` | `createSelection`, `toggleSelectionCell`, `selectionOutline`, `selectionRegions`, `stampSelection` — the pure selection model and its outline geometry |
+| `selection` | `createSelection`, `toggleSelectionCell`, `selectionOutline`, `selectionRegions`, `fillSelection`, `stampSelection` — the pure selection model and its outline geometry |
 | `input` | `bindStudioInput` — delegated pointer gestures plus your configurable shortcut map |
 | `image` | `drawStudioGrid`, `studioGridToDataUrl`, `saveStudioGridImage` — canvas-based export and download |
 | `storage` | `createDesignStore` — versioned, validated persistence over any storage adapter |
@@ -182,6 +182,7 @@ Moving a selection runs through the document reducer, so the whole move is one u
 | `lift-selection` | Cut the selected cells off the canvas into a float (rendered in place, at offset zero) |
 | `move-selection` | Nudge the float by a delta; pass `selection` to lift on the first nudge, so arrow keys work without a drag |
 | `place-selection` | Put the float at an absolute offset — what a pointer drag dispatches |
+| `fill-selection` | Recolor the selected cells (one history entry; repaints a float in place instead) |
 | `commit-selection` | Write the float into the grid (one history entry) |
 | `cancel-selection` | Restore the pre-lift grid |
 

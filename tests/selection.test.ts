@@ -5,6 +5,7 @@ import {
   addSelectionCell,
   clearSelection,
   createSelection,
+  fillSelection,
   isSelectionContiguous,
   readSelection,
   removeSelectionCell,
@@ -202,4 +203,17 @@ test("stamps contents at an offset, overwriting and dropping off-canvas cells", 
     stampSelection(grid, contents, { row: 0.5, column: 0 }),
     grid,
   );
+});
+
+test("fills selected cells with one color, ignoring anything off the grid", () => {
+  const grid = gridWith([0, 0, "#aaa"], [1, 1, "#bbb"]);
+  const filled = fillSelection(grid, at([0, 0], [0, 1], [9, 9]), "#ccc");
+
+  assert.equal(filled[0][0], "#ccc");
+  assert.equal(filled[0][1], "#ccc");
+  assert.equal(filled[1][1], "#bbb");
+  assert.equal(filled[1], grid[1]);
+  assert.equal(grid[0][0], "#aaa");
+  assert.equal(fillSelection(grid, at([0, 0]), "#aaa"), grid);
+  assert.deepEqual(fillSelection(grid, at([0, 0]), null)[0][0], null);
 });
