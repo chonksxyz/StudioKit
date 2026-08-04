@@ -30,7 +30,7 @@ Use `npm start` on its own when `dist/` is already built.
 | Shift-click | Add a painted cell — or remove it, if it was already selected. Shift selects in every tool; it never erases |
 | Shift-drag | Sweep a run of cells in, or out if the drag started on a selected cell |
 | Drag a selected cell | Move the whole selection (no Shift needed — the selection persists) |
-| Drop | Commits the move as a single undo entry, and the selection stays on the pixels it moved |
+| Drop | Commits the move as a single undo entry and ends the selection, so the next stroke draws |
 | Arrow keys | Nudge the selection one cell, lifting it on the first press |
 | `↵` / Apply | Land an arrow-key move now (drawing or selecting elsewhere lands it too) |
 | `Del` / `⌫` / Delete cells | Empty the selected cells and clear the selection — one undo entry |

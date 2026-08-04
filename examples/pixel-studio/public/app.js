@@ -186,13 +186,12 @@ function describeSelection(floating) {
 // Only painted cells can be selected — shift-clicking bare canvas does nothing.
 const isPainted = (row, column) => state.grid[row][column] !== null;
 
-// Dropping the cells writes them. The selection stays on the pixels it moved,
-// so the next drag picks up where this one left off.
+// Dropping the cells writes them and ends the selection. Keeping it alive would
+// make the very next drag over those pixels move them again instead of drawing.
 function applySelection() {
   if (state.float === null) return;
-  const landed = selectionWithinGrid(getFloatingSelection(state), SIZE);
   dispatch({ type: "commit-selection" });
-  selection = landed;
+  selection = createSelection();
   render();
 }
 

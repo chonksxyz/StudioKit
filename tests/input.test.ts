@@ -472,7 +472,7 @@ test("resets pinch distance when touch membership changes", () => {
   binding.destroy();
 });
 
-test("cancels an active stroke when pointer capture is lost unexpectedly", () => {
+test("keeps an active stroke's pixels when pointer capture is lost", () => {
   const grid = new FakeGrid();
   const target = cell(1, 2);
   grid.cells.add(target);
@@ -489,11 +489,14 @@ test("cancels an active stroke when pointer capture is lost unexpectedly", () =>
   grid.emit("pointerdown", pointerEvent(target));
   grid.emit("lostpointercapture", pointerEvent(grid));
 
-  assert.deepEqual(calls, ["begin", "cancel"]);
+  // Losing capture only means no more events are coming — the user can already
+  // see these pixels, and browsers disagree on whether this fires before or
+  // after pointerup, so discarding here would drop finished strokes.
+  assert.deepEqual(calls, ["begin", "commit"]);
   binding.destroy();
 });
 
-test("removes a touch whose pointer capture is lost unexpectedly", () => {
+test("removes a touch whose pointer capture is lost", () => {
   const grid = new FakeGrid();
   const windowTarget = new FakeEventTarget();
   const target = cell(1, 2);
@@ -516,7 +519,7 @@ test("removes a touch whose pointer capture is lost unexpectedly", () => {
   grid.emit("pointerdown", touch(2));
   windowTarget.emit("pointerup", touch(2));
 
-  assert.deepEqual(calls, ["begin", "cancel", "begin", "commit"]);
+  assert.deepEqual(calls, ["begin", "commit", "begin", "commit"]);
   binding.destroy();
 });
 
@@ -754,6 +757,7 @@ test("preserves a stroke-start error while rolling back partial actions", () => 
     pointerEvent(grid, { pointerId: 2, buttons: 0 }),
   );
 
+  // A stroke that never started is rolled back, not committed.
   assert.deepEqual(calls, ["begin", "cancel", "begin", "commit"]);
   binding.destroy();
 });
@@ -1192,5 +1196,141 @@ test("leaves Delete alone when no delete handler is wired", () => {
 
   assert.deepEqual(calls, []);
   assert.deepEqual(prevented, []);
+  binding.destroy();
+});
+
+test("fills the cells between pointer samples so fast strokes stay connected", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const documentTarget = new FakeDocument();
+  const start = cell(0, 0);
+  const far = cell(3, 3);
+  const sideways = cell(3, 6);
+  grid.cells.add(start);
+  grid.cells.add(far);
+  grid.cells.add(sideways);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    documentTarget,
+    actions: {
+      beginStroke: (row, column) => calls.push(`${row},${column}`),
+      updateStroke: (row, column) => calls.push(`${row},${column}`),
+    },
+  });
+
+  grid.emit("pointerdown", pointerEvent(start));
+  // One sample three cells away diagonally, then one three cells sideways.
+  documentTarget.hitTarget = far;
+  grid.emit("pointermove", pointerEvent(far));
+  documentTarget.hitTarget = sideways;
+  grid.emit("pointermove", pointerEvent(sideways));
+  windowTarget.emit("pointerup", pointerEvent(sideways, { buttons: 0 }));
+
+  assert.deepEqual(calls, [
+    "0,0",
+    "1,1",
+    "2,2",
+    "3,3",
+    "3,4",
+    "3,5",
+    "3,6",
+  ]);
+  binding.destroy();
+});
+
+test("starts each stroke's interpolation from its own first cell", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const documentTarget = new FakeDocument();
+  const first = cell(0, 0);
+  const second = cell(0, 2);
+  const third = cell(5, 5);
+  for (const target of [first, second, third]) grid.cells.add(target);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    documentTarget,
+    actions: {
+      beginStroke: (row, column) => calls.push(`begin:${row},${column}`),
+      updateStroke: (row, column) => calls.push(`update:${row},${column}`),
+    },
+  });
+
+  grid.emit("pointerdown", pointerEvent(first));
+  documentTarget.hitTarget = second;
+  grid.emit("pointermove", pointerEvent(second));
+  windowTarget.emit("pointerup", pointerEvent(second, { buttons: 0 }));
+
+  // A new stroke far away must not draw a line from where the last one ended.
+  grid.emit("pointerdown", pointerEvent(third));
+  windowTarget.emit("pointerup", pointerEvent(third, { buttons: 0 }));
+
+  assert.deepEqual(calls, [
+    "begin:0,0",
+    "update:0,1",
+    "update:0,2",
+    "begin:5,5",
+  ]);
+  binding.destroy();
+});
+
+test("fills the cells between samples while sweeping a selection", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const documentTarget = new FakeDocument();
+  const start = cell(2, 0);
+  const far = cell(2, 3);
+  grid.cells.add(start);
+  grid.cells.add(far);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    documentTarget,
+    shiftSelects: true,
+    actions: { selection: selectionActions(calls) },
+  });
+
+  grid.emit("pointerdown", pointerEvent(start, { shiftKey: true }));
+  documentTarget.hitTarget = far;
+  grid.emit("pointermove", pointerEvent(far, { shiftKey: true }));
+  windowTarget.emit("pointerup", pointerEvent(far, { buttons: 0 }));
+
+  assert.deepEqual(calls, [
+    "begin-select:2,0:true",
+    "extend-select:2,1:true",
+    "extend-select:2,2:true",
+    "extend-select:2,3:true",
+    "end-select",
+  ]);
+  binding.destroy();
+});
+
+test("commits on capture loss even when it arrives before pointerup", () => {
+  const grid = new FakeGrid();
+  const windowTarget = new FakeEventTarget();
+  const target = cell(1, 2);
+  grid.cells.add(target);
+  const calls: string[] = [];
+  const binding = bind({
+    grid,
+    windowTarget,
+    actions: {
+      beginStroke: () => calls.push("begin"),
+      updateStroke: () => calls.push("update"),
+      commitStroke: () => calls.push("commit"),
+      cancelStroke: () => calls.push("cancel"),
+    },
+  });
+
+  // Browsers disagree on this ordering; a stroke must survive either one.
+  grid.emit("pointerdown", pointerEvent(target));
+  grid.emit("lostpointercapture", pointerEvent(grid));
+  windowTarget.emit("pointerup", pointerEvent(target, { buttons: 0 }));
+
+  assert.deepEqual(calls, ["begin", "commit"]);
   binding.destroy();
 });

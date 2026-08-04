@@ -107,10 +107,12 @@ const binding = bindStudioInput({
 What the binding does for you:
 
 - **Pointer strokes.** `pointerdown` on a cell begins a stroke with pointer capture; dragging updates it cell by cell (via `elementFromPoint`, so it works across rows); release commits exactly once. `color` is the selected color, or `null` when erasing.
+- **Fast drags stay connected.** Pointer samples arrive far coarser than the grid — a quick flick can report three points twenty cells apart — so strokes and selection sweeps walk the cells between consecutive samples instead of leaving gaps.
 - **Erase affordances.** Right-click drag erases (without breaking context menus outside the grid). Holding Shift erases. `mode: "erase"` in your policy erases.
 - **Selection gestures.** `mode: "select"` swaps strokes for selection: Shift-click and drag to pick cells, drag a selected cell to move the whole selection, arrow keys to nudge, Enter/Escape to commit or cancel. See step 6.
 - **Touch.** One finger draws; a second finger cancels the stroke and reports pinch factors through `applyPinchScale`.
 - **Safety.** Strokes cancel — never half-commit — on window blur, tab hide, an overlay opening, or `destroy()`. Text selection and the grid's own context menu are suppressed.
+- **Losing pointer capture commits.** Capture loss only means no more events are coming for a stroke the user can already see, and browsers disagree on whether `lostpointercapture` fires before or after `pointerup`. Discarding there would make a finished stroke vanish on release, so Studio keeps the pixels.
 
 Two lifecycle calls matter:
 

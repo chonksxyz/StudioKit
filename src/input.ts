@@ -92,6 +92,42 @@ const ARROW_DELTAS: Record<
   ArrowRight: { row: 0, column: 1 },
 };
 
+/**
+ * Bresenham's line, yielding every cell after the start up to and including the
+ * end. Pointer samples arrive coarser than the grid — a fast drag reports a
+ * handful of points many cells apart — so gestures walk the cells in between,
+ * or a quick stroke lands as a row of dots.
+ */
+function* cellsBetween(
+  fromRow: number,
+  fromColumn: number,
+  toRow: number,
+  toColumn: number,
+): Generator<{ row: number; column: number }> {
+  const rowSpan = Math.abs(toRow - fromRow);
+  const columnSpan = Math.abs(toColumn - fromColumn);
+  const rowStep = fromRow < toRow ? 1 : -1;
+  const columnStep = fromColumn < toColumn ? 1 : -1;
+  let error = columnSpan - rowSpan;
+  let row = fromRow;
+  let column = fromColumn;
+
+  // The span is its own iteration bound, so a bad coordinate cannot spin here.
+  for (let step = rowSpan + columnSpan; step > 0; step -= 1) {
+    if (row === toRow && column === toColumn) return;
+    const doubled = 2 * error;
+    if (doubled > -rowSpan) {
+      error -= rowSpan;
+      column += columnStep;
+    }
+    if (doubled < columnSpan) {
+      error += columnSpan;
+      row += rowStep;
+    }
+    yield { row, column };
+  }
+}
+
 type SelectionGesture = {
   pointerId: number;
   kind: "select" | "move";
@@ -151,6 +187,7 @@ export function bindStudioInput({
   }
 
   let activeStrokePointer: number | null = null;
+  let lastStrokeCell: { row: number; column: number } | null = null;
   let shiftErase = false;
   let rightClickErase = false;
   const touchPointers = new Map<number, { x: number; y: number }>();
@@ -232,6 +269,7 @@ export function bindStudioInput({
     if (activeStrokePointer === null) return;
     const pointerId = activeStrokePointer;
     activeStrokePointer = null;
+    lastStrokeCell = null;
     try {
       if (commit) actions.commitStroke();
       else actions.cancelStroke();
@@ -258,6 +296,7 @@ export function bindStudioInput({
 
   const rollbackStrokeStart = (event: PointerEvent, strokeBegan: boolean) => {
     activeStrokePointer = null;
+    lastStrokeCell = null;
     removeTouchPointer(event);
 
     // Cleanup failures must not replace the error that aborted pointer startup.
@@ -352,6 +391,7 @@ export function bindStudioInput({
       grid.setPointerCapture?.(event.pointerId);
       const color = strokeColor();
       strokeBegan = true;
+      lastStrokeCell = coordinates;
       actions.beginStroke(coordinates.row, coordinates.column, color);
     } catch (error) {
       rollbackStrokeStart(event, strokeBegan);
@@ -393,20 +433,23 @@ export function bindStudioInput({
       ) {
         return;
       }
-      gesture.lastRow = coordinates.row;
-      gesture.lastColumn = coordinates.column;
       if (gesture.kind === "move") {
         actions.selection?.moveTo(
           coordinates.row - gesture.row,
           coordinates.column - gesture.column,
         );
       } else {
-        actions.selection?.extendSelect(
+        for (const { row, column } of cellsBetween(
+          gesture.lastRow,
+          gesture.lastColumn,
           coordinates.row,
           coordinates.column,
-          gesture.additive,
-        );
+        )) {
+          actions.selection?.extendSelect(row, column, gesture.additive);
+        }
       }
+      gesture.lastRow = coordinates.row;
+      gesture.lastColumn = coordinates.column;
       return;
     }
     if (event.pointerId !== activeStrokePointer) return;
@@ -417,11 +460,22 @@ export function bindStudioInput({
     const hitTarget = documentTarget.elementFromPoint(event.clientX, event.clientY);
     const coordinates = cellCoordinates(hitTarget);
     if (!coordinates) return;
-    actions.updateStroke(
-      coordinates.row,
-      coordinates.column,
-      strokeColor((event.buttons & 2) !== 0),
-    );
+
+    const color = strokeColor((event.buttons & 2) !== 0);
+    const previous = lastStrokeCell;
+    if (previous) {
+      for (const { row, column } of cellsBetween(
+        previous.row,
+        previous.column,
+        coordinates.row,
+        coordinates.column,
+      )) {
+        actions.updateStroke(row, column, color);
+      }
+    } else {
+      actions.updateStroke(coordinates.row, coordinates.column, color);
+    }
+    lastStrokeCell = coordinates;
   };
 
   const handlePointerUp = (event: PointerEvent) => {
@@ -444,7 +498,13 @@ export function bindStudioInput({
     removeTouchPointer(event);
     if (event.pointerId === selectionGesture?.pointerId) {
       finishSelectionGesture(false);
-    } else if (event.pointerId === activeStrokePointer) finishStroke(false);
+    } else if (event.pointerId === activeStrokePointer) {
+      // Capture loss is not an abort: it means no more events are coming for a
+      // stroke the user can already see. Keep those pixels. Browsers disagree
+      // on whether this fires before or after pointerup, and discarding here
+      // made a finished stroke vanish on release wherever it lands first.
+      finishStroke(true, false);
+    }
   };
 
   const cancelGesture = () => {
