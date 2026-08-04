@@ -36,6 +36,7 @@
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "test": "node --import tsx --test \"tests/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json",
+    "prepare": "tsc -p tsconfig.build.json",
     "prepack": "npm test && npm run typecheck && npm run build"
   },
   "devDependencies": {
