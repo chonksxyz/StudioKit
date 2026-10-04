@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGrid, type StudioGrid } from "../src/grid.ts";
+import { createGrid, getCell, gridToRows, setCell, type StudioGrid } from "../src/grid.ts";
 import {
   addSelectionCell,
   clearSelection,
@@ -35,7 +35,7 @@ function gridWith(
   ...pixels: Array<[row: number, column: number, color: string]>
 ): StudioGrid {
   const grid = createGrid(SIZE);
-  for (const [row, column, color] of pixels) grid[row][column] = color;
+  for (const [row, column, color] of pixels) setCell(grid, row, column, color);
   return grid;
 }
 
@@ -160,60 +160,73 @@ test("reads selected colors and skips coordinates off the grid", () => {
   ]);
 });
 
-test("clears selected cells while keeping untouched rows identical", () => {
+test("clears selected cells in place", () => {
   const grid = gridWith([0, 0, "#aaa"], [1, 1, "#bbb"]);
-  const cleared = clearSelection(grid, at([0, 0], [9, 9]));
 
-  assert.equal(cleared[0][0], null);
-  assert.equal(cleared[1][1], "#bbb");
-  assert.equal(cleared[1], grid[1]);
-  assert.equal(grid[0][0], "#aaa");
-  assert.equal(clearSelection(grid, at([2, 2])), grid);
+  assert.equal(clearSelection(grid, at([0, 0], [9, 9])), true);
+  assert.equal(getCell(grid, 0, 0), null);
+  assert.equal(getCell(grid, 1, 1), "#bbb");
+  assert.equal(clearSelection(grid, at([2, 2])), false);
 });
 
 test("stamps contents at an offset, overwriting and dropping off-canvas cells", () => {
   const grid = gridWith([0, 0, "#aaa"], [1, 0, "#bbb"]);
   const contents = readSelection(grid, at([0, 0], [1, 0]));
 
-  const moved = stampSelection(clearSelection(grid, contents), contents, {
-    row: 0,
-    column: 2,
-  });
-  assert.equal(moved[0][0], null);
-  assert.equal(moved[0][2], "#aaa");
-  assert.equal(moved[1][2], "#bbb");
+  clearSelection(grid, contents);
+  assert.equal(stampSelection(grid, contents, { row: 0, column: 2 }), true);
+  assert.equal(getCell(grid, 0, 0), null);
+  assert.equal(getCell(grid, 0, 2), "#aaa");
+  assert.equal(getCell(grid, 1, 2), "#bbb");
 
   // Overwrite: the destination color is replaced, not blended.
-  const onto = stampSelection(gridWith([0, 1, "#ccc"]), contents, {
-    row: 0,
-    column: 1,
-  });
-  assert.equal(onto[0][1], "#aaa");
+  const onto = gridWith([0, 1, "#ccc"]);
+  stampSelection(onto, contents, { row: 0, column: 1 });
+  assert.equal(getCell(onto, 0, 1), "#aaa");
 
   // Off-canvas cells are dropped — the implied delete.
-  const offCanvas = stampSelection(clearSelection(grid, contents), contents, {
-    row: 0,
-    column: -1,
-  });
-  assert.deepEqual(offCanvas[0], [null, null, null, null]);
-  assert.deepEqual(offCanvas[1], [null, null, null, null]);
+  const offCanvas = gridWith([0, 0, "#aaa"], [1, 0, "#bbb"]);
+  clearSelection(offCanvas, contents);
+  stampSelection(offCanvas, contents, { row: 0, column: -1 });
+  assert.deepEqual(gridToRows(offCanvas).slice(0, 2), [
+    [null, null, null, null],
+    [null, null, null, null],
+  ]);
 
-  assert.equal(stampSelection(grid, contents), grid);
-  assert.equal(
-    stampSelection(grid, contents, { row: 0.5, column: 0 }),
-    grid,
-  );
+  // Stamping what is already there, or at a fractional offset, changes nothing.
+  const unchanged = gridWith([0, 0, "#aaa"], [1, 0, "#bbb"]);
+  assert.equal(stampSelection(unchanged, contents), false);
+  assert.equal(stampSelection(unchanged, contents, { row: 0.5, column: 0 }), false);
 });
 
 test("fills selected cells with one color, ignoring anything off the grid", () => {
   const grid = gridWith([0, 0, "#aaa"], [1, 1, "#bbb"]);
-  const filled = fillSelection(grid, at([0, 0], [0, 1], [9, 9]), "#ccc");
 
-  assert.equal(filled[0][0], "#ccc");
-  assert.equal(filled[0][1], "#ccc");
-  assert.equal(filled[1][1], "#bbb");
-  assert.equal(filled[1], grid[1]);
-  assert.equal(grid[0][0], "#aaa");
-  assert.equal(fillSelection(grid, at([0, 0]), "#aaa"), grid);
-  assert.deepEqual(fillSelection(grid, at([0, 0]), null)[0][0], null);
+  assert.equal(fillSelection(grid, at([0, 0], [0, 1], [9, 9]), "#ccc"), true);
+  assert.equal(getCell(grid, 0, 0), "#ccc");
+  assert.equal(getCell(grid, 0, 1), "#ccc");
+  assert.equal(getCell(grid, 1, 1), "#bbb");
+  assert.equal(fillSelection(grid, at([0, 0]), "#ccc"), false);
+  assert.equal(fillSelection(grid, [{ row: 0.5, column: 0 }], "#ddd"), false);
+  fillSelection(grid, at([0, 0]), null);
+  assert.equal(getCell(grid, 0, 0), null);
+});
+
+test("normalizes large, scattered, and far-apart selections", () => {
+  const reversed = selectionRectangle({ row: 0, column: 0 }, { row: 63, column: 63 })
+    .slice()
+    .reverse();
+  const normalized = createSelection([...reversed, ...reversed]);
+  assert.equal(normalized.length, 64 * 64);
+  assert.deepEqual(normalized[0], { row: 0, column: 0 });
+  assert.deepEqual(normalized.at(-1), { row: 63, column: 63 });
+
+  // Too spread out for a bitmap: falls back to sorting and hashing.
+  const far = at([1e9, 0], [-1e9, 5], [1e9, 1], [-1e9, 5]);
+  assert.deepEqual(positions(createSelection(far)), ["-1000000000,5", "1000000000,0", "1000000000,1"]);
+  assert.deepEqual(selectionRegions(far).map(positions), [
+    ["-1000000000,5"],
+    ["1000000000,0", "1000000000,1"],
+  ]);
+  assert.equal(selectionOutline(far).length, 10);
 });

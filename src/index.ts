@@ -1,23 +1,25 @@
 export {
+  cellIndex,
+  cellsEqual,
   cloneGrid,
   createGrid,
+  getCell,
   getGridSize,
+  gridFromRows,
   gridsEqual,
+  gridToRows,
   mergeGrids,
   sameGridSize,
+  setCell,
+  type ReadonlyStudioGrid,
   type StudioCell,
   type StudioGrid,
   type StudioGridSize,
 } from "./grid.ts";
 
 export {
-  canRedo,
-  canUndo,
-  createStudioDocument,
-  getFloatingSelection,
-  studioDocumentReducer,
+  StudioDocument,
   type StudioDocumentAction,
-  type StudioDocumentState,
   type StudioFloatingSelection,
 } from "./document.ts";
 

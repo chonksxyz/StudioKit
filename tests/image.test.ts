@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGrid } from "../src/grid.ts";
+import { createGrid, setCell } from "../src/grid.ts";
+import { StudioDocument } from "../src/document.ts";
 import {
   drawStudioGrid,
   saveStudioGridImage,
@@ -52,8 +53,8 @@ function createFakeDocument() {
 
 test("draws only painted cells at the configured scale", () => {
   const grid = createGrid({ rows: 2, columns: 3 });
-  grid[0][0] = "#111111";
-  grid[1][2] = "#222222";
+  setCell(grid, 0, 0, "#111111");
+  setCell(grid, 1, 2, "#222222");
   const { context, rects } = createRecordingContext();
 
   drawStudioGrid(context, grid, { scale: 4 });
@@ -66,7 +67,7 @@ test("draws only painted cells at the configured scale", () => {
 
 test("fills an optional background behind the pixels", () => {
   const grid = createGrid({ rows: 2, columns: 3 });
-  grid[0][1] = "#abcdef";
+  setCell(grid, 0, 1, "#abcdef");
   const { context, rects } = createRecordingContext();
 
   drawStudioGrid(context, grid, { scale: 2, backgroundColor: "#ffffff" });
@@ -100,7 +101,7 @@ test("encodes the grid to a data URL sized from the grid dimensions", () => {
 
 test("saves the grid by clicking a download link", () => {
   const grid = createGrid({ rows: 1, columns: 1 });
-  grid[0][0] = "#123456";
+  setCell(grid, 0, 0, "#123456");
   const { documentTarget, clickedLinks } = createFakeDocument();
 
   const saved = saveStudioGridImage(grid, {
@@ -113,4 +114,14 @@ test("saves the grid by clicking a download link", () => {
   assert.equal(clickedLinks.length, 1);
   assert.equal(clickedLinks[0].download, "art.png");
   assert.equal(clickedLinks[0].href, "data:image/png;fake,8x8");
+});
+
+test("draws a document directly", () => {
+  const document = new StudioDocument(createGrid({ rows: 2, columns: 2 }));
+  document.beginStroke(1, 0, "#654321");
+  const { context, rects } = createRecordingContext();
+
+  drawStudioGrid(context, document, { scale: 1 });
+
+  assert.deepEqual(rects, [{ fillStyle: "#654321", x: 0, y: 1, w: 1, h: 1 }]);
 });

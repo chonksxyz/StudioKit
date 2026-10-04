@@ -1,6 +1,6 @@
 {
   "name": "@chonksxyz/studio",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A dependency-free toolkit for building pixel art studios: configurable grids, undo/redo history, draw and erase input, multi-cell selection with drag-to-move, configurable keyboard shortcuts, image export, and design persistence.",
   "license": "MIT",
   "packageManager": "yarn@1.22.22",

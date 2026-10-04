@@ -1,13 +1,8 @@
 import {
   addSelectionCell,
   bindStudioInput,
-  canRedo,
-  canUndo,
-  clearSelection,
   createGrid,
   createSelection,
-  createStudioDocument,
-  getFloatingSelection,
   isSelectionContiguous,
   removeSelectionCell,
   saveStudioGridImage,
@@ -15,7 +10,7 @@ import {
   selectionOutline,
   selectionRegions,
   selectionWithinGrid,
-  studioDocumentReducer,
+  StudioDocument,
   toggleSelectionCell,
 } from "/studio/index.js";
 
@@ -32,7 +27,7 @@ const PALETTE = [
 // --- State -----------------------------------------------------------------
 // The document owns the pixels and the in-flight move; this app owns the tool,
 // the swatch, and which cells are selected.
-let state = createStudioDocument(createGrid(SIZE));
+const studio = new StudioDocument(createGrid(SIZE));
 let selection = createSelection();
 let tool = "draw";
 let selectedColor = PALETTE[0].color;
@@ -44,11 +39,9 @@ const paletteElement = document.querySelector("#palette");
 const statusElement = document.querySelector("#selection-status");
 const toolButtons = [...document.querySelectorAll("[data-tool]")];
 
+// Every document method reports whether it changed anything; redraw if so.
 function dispatch(action) {
-  const next = studioDocumentReducer(state, action);
-  if (next === state) return;
-  state = next;
-  render();
+  if (studio.dispatch(action)) render();
 }
 
 // --- Cells -----------------------------------------------------------------
@@ -110,7 +103,7 @@ const EDGE_SHADOWS = {
 function render() {
   // While a move is in flight the document knows where the cells are now;
   // otherwise the outline follows what the user has picked.
-  const floating = getFloatingSelection(state);
+  const floating = studio.floatingSelection();
   const live = selectionWithinGrid(floating ?? selection, SIZE);
   const selected = new Set(live.map(({ row, column }) => cellKey(row, column)));
 
@@ -124,7 +117,7 @@ function render() {
     for (let column = 0; column < SIZE.columns; column += 1) {
       const key = cellKey(row, column);
       const element = cells[key];
-      const background = state.grid[row][column] ?? "transparent";
+      const background = studio.getCell(row, column) ?? "transparent";
       if (element.style.background !== background) {
         element.style.background = background;
       }
@@ -156,12 +149,12 @@ function renderChrome(floating) {
     );
   }
 
-  document.querySelector("#undo").disabled = !canUndo(state);
-  document.querySelector("#redo").disabled = !canRedo(state);
-  document.querySelector("#apply").disabled = state.float === null;
+  document.querySelector("#undo").disabled = !studio.canUndo;
+  document.querySelector("#redo").disabled = !studio.canRedo;
+  document.querySelector("#apply").disabled = studio.float === null;
   document.querySelector("#delete").disabled = selection.length === 0;
   document.querySelector("#cancel").disabled =
-    state.float === null && selection.length === 0;
+    studio.float === null && selection.length === 0;
 
   statusElement.textContent = describeSelection(floating);
 }
@@ -178,7 +171,7 @@ function describeSelection(floating) {
   const count = cellsChosen.length === 1 ? "1 cell" : `${cellsChosen.length} cells`;
   const parts = [`${count} · ${shape}`];
   if (floating) {
-    const { row, column } = state.float.offset;
+    const { row, column } = studio.float.offset;
     parts.push(`moved ${row >= 0 ? "+" : ""}${row}, ${column >= 0 ? "+" : ""}${column}`);
     const dropped =
       floating.length - selectionWithinGrid(floating, SIZE).length;
@@ -189,12 +182,12 @@ function describeSelection(floating) {
 
 // --- Selection actions -----------------------------------------------------
 // Only painted cells can be selected — shift-clicking bare canvas does nothing.
-const isPainted = (row, column) => state.grid[row][column] !== null;
+const isPainted = (row, column) => studio.getCell(row, column) !== null;
 
 // Dropping the cells writes them and ends the selection. Keeping it alive would
 // make the very next drag over those pixels move them again instead of drawing.
 function applySelection() {
-  if (state.float === null) return;
+  if (studio.float === null) return;
   dispatch({ type: "commit-selection" });
   selection = createSelection();
   render();
@@ -206,8 +199,8 @@ function deleteSelection() {
   if (selection.length === 0) return;
   // Put a move back first, so the pixels are deleted from where they started
   // rather than leaving a copy behind.
-  if (state.float !== null) dispatch({ type: "cancel-selection" });
-  dispatch({ type: "load", grid: clearSelection(state.grid, selection) });
+  if (studio.float !== null) dispatch({ type: "cancel-selection" });
+  dispatch({ type: "fill-selection", selection, color: null });
   selection = createSelection();
   render();
 }
@@ -307,7 +300,7 @@ const binding = bindStudioInput({
       key: "s",
       overlays: ["none", "picker"],
       preventDefault: true,
-      run: () => saveStudioGridImage(state.grid, { scale: 16, fileName: "studio.png" }),
+      run: () => saveStudioGridImage(studio, { scale: 16, fileName: "studio.png" }),
     },
   ],
 });
@@ -317,7 +310,7 @@ gridElement.addEventListener("pointerdown", (event) => {
   if (tool !== "pick" || event.button !== 0) return;
   const cell = event.target.closest?.("[data-row][data-col]");
   if (!cell) return;
-  const color = state.grid[Number(cell.dataset.row)][Number(cell.dataset.col)];
+  const color = studio.getCell(Number(cell.dataset.row), Number(cell.dataset.col));
   if (color !== null) selectedColor = color;
   setTool(previousTool === "pick" ? "draw" : previousTool);
 });
@@ -333,7 +326,7 @@ document.querySelector("#clear").addEventListener("click", () => {
   render();
 });
 document.querySelector("#save").addEventListener("click", () =>
-  saveStudioGridImage(state.grid, { scale: 16, fileName: "studio.png" }),
+  saveStudioGridImage(studio, { scale: 16, fileName: "studio.png" }),
 );
 document.querySelector("#apply").addEventListener("click", applySelection);
 document.querySelector("#delete").addEventListener("click", deleteSelection);

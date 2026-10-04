@@ -1,4 +1,4 @@
-import { getGridSize, type StudioGrid } from "./grid.ts";
+import { getGridSize, type ReadonlyStudioGrid } from "./grid.ts";
 
 export type StudioFillContext = {
   fillStyle: string | CanvasGradient | CanvasPattern;
@@ -42,7 +42,7 @@ function resolveCanvasDimensions(
 
 export function drawStudioGrid(
   context: StudioFillContext,
-  grid: StudioGrid,
+  grid: ReadonlyStudioGrid,
   options: StudioImageOptions = {},
 ): void {
   const { rows, columns } = getGridSize(grid);
@@ -53,17 +53,20 @@ export function drawStudioGrid(
     context.fillRect(0, 0, columns * scale, rows * scale);
   }
 
-  grid.forEach((row, y) => {
-    row.forEach((color, x) => {
-      if (color === null) return;
-      context.fillStyle = color;
-      context.fillRect(x * scale, y * scale, scale, scale);
-    });
+  grid.cells.forEach((color, index) => {
+    if (color === null) return;
+    context.fillStyle = color;
+    context.fillRect(
+      (index % columns) * scale,
+      Math.floor(index / columns) * scale,
+      scale,
+      scale,
+    );
   });
 }
 
 export function studioGridToDataUrl(
-  grid: StudioGrid,
+  grid: ReadonlyStudioGrid,
   options: StudioImageEncodingOptions = {},
 ): string {
   const { rows, columns } = getGridSize(grid);
@@ -82,7 +85,7 @@ export function studioGridToDataUrl(
 }
 
 export function saveStudioGridImage(
-  grid: StudioGrid,
+  grid: ReadonlyStudioGrid,
   options: StudioImageEncodingOptions & { fileName?: string } = {},
 ): boolean {
   const dataUrl = studioGridToDataUrl(grid, options);

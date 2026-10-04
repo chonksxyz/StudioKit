@@ -1,5 +1,6 @@
 import {
   getGridSize,
+  type ReadonlyStudioGrid,
   type StudioCell,
   type StudioGrid,
   type StudioGridSize,
@@ -33,9 +34,8 @@ const SIDES: readonly {
   { side: "left", rowDelta: 0, columnDelta: -1 },
 ];
 
-function cellKey(row: number, column: number): string {
-  return `${row},${column}`;
-}
+/** Bounding boxes up to this many cells (or 16 per selected cell) use a bitmap. */
+const BITMAP_MIN_AREA = 1 << 16;
 
 function isCoordinatePair(cell: StudioSelectionCell): boolean {
   return Number.isInteger(cell.row) && Number.isInteger(cell.column);
@@ -49,6 +49,63 @@ function byPosition(
 }
 
 /**
+ * Membership over normalized cells. Selections on a pixel canvas are compact,
+ * so a bitmap over their bounding box answers in a few arithmetic operations;
+ * cells scattered across a huge range fall back to a string-keyed set.
+ */
+class CellSet {
+  private readonly minRow: number = 0;
+  private readonly minColumn: number = 0;
+  private readonly width: number = 0;
+  private readonly height: number = 0;
+  private readonly bits: Uint8Array | null = null;
+  private readonly keys: Set<string> | null = null;
+
+  constructor(normalized: StudioSelection) {
+    const bounds = selectionBounds(normalized);
+    if (bounds === null) {
+      this.keys = new Set();
+      return;
+    }
+    this.minRow = bounds.minRow;
+    this.minColumn = bounds.minColumn;
+    this.height = bounds.maxRow - bounds.minRow + 1;
+    this.width = bounds.maxColumn - bounds.minColumn + 1;
+    const area = this.width * this.height;
+    if (area > Math.max(BITMAP_MIN_AREA, normalized.length * 16)) {
+      this.keys = new Set(normalized.map(({ row, column }) => `${row},${column}`));
+      return;
+    }
+    this.bits = new Uint8Array(area);
+    for (const { row, column } of normalized) {
+      this.bits[(row - this.minRow) * this.width + column - this.minColumn] = 1;
+    }
+  }
+
+  private slot(row: number, column: number): number {
+    const y = row - this.minRow;
+    const x = column - this.minColumn;
+    return y >= 0 && y < this.height && x >= 0 && x < this.width
+      ? y * this.width + x
+      : -1;
+  }
+
+  has(row: number, column: number): boolean {
+    if (this.bits === null) return this.keys!.has(`${row},${column}`);
+    const slot = this.slot(row, column);
+    return slot !== -1 && this.bits[slot] === 1;
+  }
+
+  delete(row: number, column: number): boolean {
+    if (this.bits === null) return this.keys!.delete(`${row},${column}`);
+    const slot = this.slot(row, column);
+    if (slot === -1 || this.bits[slot] === 0) return false;
+    this.bits[slot] = 0;
+    return true;
+  }
+}
+
+/**
  * Canonical form of a selection: integer coordinates only, deduplicated, and
  * ordered row-major. Every function here returns normalized selections, so two
  * selections of the same cells are always structurally equal.
@@ -56,16 +113,51 @@ function byPosition(
 export function createSelection(
   cells: StudioSelection = [],
 ): StudioSelection {
-  const seen = new Set<string>();
   const normalized: StudioSelectionCell[] = [];
+  let ordered = true;
   for (const cell of cells) {
     if (!isCoordinatePair(cell)) continue;
-    const key = cellKey(cell.row, cell.column);
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const previous = normalized[normalized.length - 1];
+    if (previous !== undefined && byPosition(previous, cell) >= 0) {
+      ordered = false;
+    }
     normalized.push({ row: cell.row, column: cell.column });
   }
-  return normalized.sort(byPosition);
+  if (ordered) return normalized;
+
+  // Pixel selections are compact: bucket them through a bitmap over their
+  // bounding box, which sorts and deduplicates in linear time.
+  const bounds = selectionBounds(normalized) as StudioSelectionBounds;
+  const width = bounds.maxColumn - bounds.minColumn + 1;
+  const area = width * (bounds.maxRow - bounds.minRow + 1);
+  if (area <= Math.max(BITMAP_MIN_AREA, normalized.length * 16)) {
+    const bits = new Uint8Array(area);
+    for (const { row, column } of normalized) {
+      bits[(row - bounds.minRow) * width + column - bounds.minColumn] = 1;
+    }
+    let length = 0;
+    for (let slot = 0; slot < area; slot += 1) {
+      if (bits[slot] === 0) continue;
+      normalized[length] = {
+        row: bounds.minRow + Math.floor(slot / width),
+        column: bounds.minColumn + (slot % width),
+      };
+      length += 1;
+    }
+    normalized.length = length;
+    return normalized;
+  }
+
+  normalized.sort(byPosition);
+  let length = 0;
+  for (const cell of normalized) {
+    const previous = normalized[length - 1];
+    if (previous !== undefined && byPosition(previous, cell) === 0) continue;
+    normalized[length] = cell;
+    length += 1;
+  }
+  normalized.length = length;
+  return normalized;
 }
 
 export function selectionHas(
@@ -159,20 +251,19 @@ export function translateSelection(
   );
 }
 
+function isWithin(
+  { row, column }: StudioSelectionCell,
+  { rows, columns }: StudioGridSize,
+): boolean {
+  return row >= 0 && row < rows && column >= 0 && column < columns;
+}
+
 /** The cells that still land on the canvas — the rest are an implied delete. */
 export function selectionWithinGrid(
   selection: StudioSelection,
-  { rows, columns }: StudioGridSize,
+  size: StudioGridSize,
 ): StudioSelection {
-  return createSelection(
-    selection.filter(
-      (cell) =>
-        cell.row >= 0 &&
-        cell.row < rows &&
-        cell.column >= 0 &&
-        cell.column < columns,
-    ),
-  );
+  return createSelection(selection.filter((cell) => isWithin(cell, size)));
 }
 
 /**
@@ -182,35 +273,28 @@ export function selectionWithinGrid(
 export function selectionRegions(
   selection: StudioSelection,
 ): StudioSelection[] {
-  const remaining = new Map<string, StudioSelectionCell>();
-  for (const cell of createSelection(selection)) {
-    remaining.set(cellKey(cell.row, cell.column), cell);
-  }
-
+  const normalized = createSelection(selection);
+  const remaining = new CellSet(normalized);
   const regions: StudioSelection[] = [];
-  for (const [startKey, startCell] of remaining) {
-    if (!remaining.has(startKey)) continue;
-    remaining.delete(startKey);
-
+  const queue: StudioSelectionCell[] = [];
+  // Starts are visited in row-major order, so each start is the smallest cell
+  // of its region and the regions come out already ordered.
+  for (const start of normalized) {
+    if (!remaining.delete(start.row, start.column)) continue;
     const region: StudioSelectionCell[] = [];
-    const queue: StudioSelectionCell[] = [startCell];
+    queue.push(start);
     while (queue.length > 0) {
       const cell = queue.pop() as StudioSelectionCell;
       region.push(cell);
       for (const { rowDelta, columnDelta } of SIDES) {
         const row = cell.row + rowDelta;
         const column = cell.column + columnDelta;
-        const key = cellKey(row, column);
-        const neighbor = remaining.get(key);
-        if (neighbor === undefined) continue;
-        remaining.delete(key);
-        queue.push(neighbor);
+        if (remaining.delete(row, column)) queue.push({ row, column });
       }
     }
     regions.push(region.sort(byPosition));
   }
-
-  return regions.sort((left, right) => byPosition(left[0], right[0]));
+  return regions;
 }
 
 export function isSelectionContiguous(selection: StudioSelection): boolean {
@@ -227,14 +311,11 @@ export function selectionOutline(
   selection: StudioSelection,
 ): StudioSelectionEdge[] {
   const normalized = createSelection(selection);
-  const members = new Set(
-    normalized.map((cell) => cellKey(cell.row, cell.column)),
-  );
-
+  const members = new CellSet(normalized);
   const edges: StudioSelectionEdge[] = [];
   for (const { row, column } of normalized) {
     for (const { side, rowDelta, columnDelta } of SIDES) {
-      if (members.has(cellKey(row + rowDelta, column + columnDelta))) continue;
+      if (members.has(row + rowDelta, column + columnDelta)) continue;
       edges.push({ row, column, side });
     }
   }
@@ -243,89 +324,68 @@ export function selectionOutline(
 
 /** Read the colors under a selection, in normalized order. */
 export function readSelection(
-  grid: StudioGrid,
+  grid: ReadonlyStudioGrid,
   selection: StudioSelection,
 ): StudioSelectionContent[] {
-  const { rows, columns } = getGridSize(grid);
-  return createSelection(selection)
-    .filter(
-      (cell) =>
-        cell.row >= 0 &&
-        cell.row < rows &&
-        cell.column >= 0 &&
-        cell.column < columns,
-    )
-    .map((cell) => ({
-      row: cell.row,
-      column: cell.column,
-      color: grid[cell.row][cell.column],
-    }));
-}
-
-function withCell(
-  grid: StudioGrid,
-  row: number,
-  column: number,
-  color: StudioCell,
-  rows: number,
-  columns: number,
-): StudioGrid {
-  if (row < 0 || row >= rows || column < 0 || column >= columns) return grid;
-  if (grid[row][column] === color) return grid;
-  const next = [...grid];
-  next[row] = [...grid[row]];
-  next[row][column] = color;
-  return next;
+  const size = getGridSize(grid);
+  const contents: StudioSelectionContent[] = [];
+  for (const { row, column } of createSelection(selection)) {
+    if (!isWithin({ row, column }, size)) continue;
+    contents.push({ row, column, color: grid.cells[row * size.columns + column] });
+  }
+  return contents;
 }
 
 /**
- * Paint every selected cell one color, leaving untouched rows referentially
- * identical. Coordinates outside the grid are ignored.
+ * Paint every selected cell one color, in place. Returns whether any cell
+ * changed. Coordinates outside the grid are ignored.
  */
 export function fillSelection(
   grid: StudioGrid,
   selection: StudioSelection,
   color: StudioCell,
-): StudioGrid {
-  const { rows, columns } = getGridSize(grid);
-  let next = grid;
-  for (const { row, column } of selection) {
-    next = withCell(next, row, column, color, rows, columns);
+): boolean {
+  const size = getGridSize(grid);
+  let changed = false;
+  for (const cell of selection) {
+    if (!isCoordinatePair(cell) || !isWithin(cell, size)) continue;
+    const index = cell.row * size.columns + cell.column;
+    if (grid.cells[index] === color) continue;
+    grid.cells[index] = color;
+    changed = true;
   }
-  return next;
+  return changed;
 }
 
-/** Empty every selected cell — `fillSelection` with no color. */
+/** Empty every selected cell in place — `fillSelection` with no color. */
 export function clearSelection(
   grid: StudioGrid,
   selection: StudioSelection,
-): StudioGrid {
+): boolean {
   return fillSelection(grid, selection, null);
 }
 
 /**
- * Write selection contents at an offset, overwriting whatever is underneath.
- * Cells that land outside the grid are dropped — moving pixels off the canvas
- * deletes them.
+ * Write selection contents at an offset, in place, overwriting whatever is
+ * underneath. Cells that land outside the grid are dropped — moving pixels
+ * off the canvas deletes them. Returns whether any cell changed.
  */
 export function stampSelection(
   grid: StudioGrid,
   contents: readonly StudioSelectionContent[],
   offset: StudioSelectionOffset = { row: 0, column: 0 },
-): StudioGrid {
-  const { rows, columns } = getGridSize(grid);
+): boolean {
+  const size = getGridSize(grid);
   const rowDelta = Number.isInteger(offset.row) ? offset.row : 0;
   const columnDelta = Number.isInteger(offset.column) ? offset.column : 0;
-  let next = grid;
+  let changed = false;
   for (const { row, column, color } of contents) {
-    next = withCell(
-      next,
-      row + rowDelta,
-      column + columnDelta,
-      color,
-      rows,
-      columns,
-    );
+    const target = { row: row + rowDelta, column: column + columnDelta };
+    if (!isCoordinatePair(target) || !isWithin(target, size)) continue;
+    const index = target.row * size.columns + target.column;
+    if (grid.cells[index] === color) continue;
+    grid.cells[index] = color;
+    changed = true;
   }
-  return next;
+  return changed;
 }

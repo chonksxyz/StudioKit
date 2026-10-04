@@ -1,125 +1,146 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  canRedo,
-  canUndo,
-  createStudioDocument,
-  getFloatingSelection,
-  studioDocumentReducer,
+  StudioDocument,
   type StudioDocumentAction,
-  type StudioDocumentState,
 } from "../src/document.ts";
-import { createGrid, type StudioGrid } from "../src/grid.ts";
+import {
+  createGrid,
+  gridToRows,
+  setCell,
+  type StudioCell,
+  type StudioGrid,
+} from "../src/grid.ts";
 
 const SIZE = { rows: 4, columns: 6 };
-
-function reduce(
-  state: StudioDocumentState,
-  ...actions: StudioDocumentAction[]
-): StudioDocumentState {
-  return actions.reduce(studioDocumentReducer, state);
-}
 
 function gridWith(
   ...pixels: Array<[row: number, column: number, color: string]>
 ): StudioGrid {
   const grid = createGrid(SIZE);
-  for (const [row, column, color] of pixels) grid[row][column] = color;
+  for (const [row, column, color] of pixels) setCell(grid, row, column, color);
   return grid;
 }
 
-test("documents adopt the dimensions of their initial grid", () => {
-  const state = createStudioDocument(createGrid(SIZE));
+function documentWith(
+  ...pixels: Array<[row: number, column: number, color: string]>
+): StudioDocument {
+  const document = new StudioDocument(createGrid(SIZE));
+  if (pixels.length > 0) document.load(gridWith(...pixels));
+  return document;
+}
 
-  assert.equal(state.grid.length, SIZE.rows);
-  assert.equal(state.grid[0].length, SIZE.columns);
-  assert.equal(canUndo(state), false);
-  assert.equal(canRedo(state), false);
-  assert.throws(() => createStudioDocument([[null], []]), /rectangle/);
+function apply(
+  document: StudioDocument,
+  ...actions: StudioDocumentAction[]
+): StudioDocument {
+  for (const action of actions) document.dispatch(action);
+  return document;
+}
+
+function cell(document: StudioDocument, row: number, column: number): StudioCell | undefined {
+  return document.getCell(row, column);
+}
+
+const EMPTY_ROWS = gridToRows(createGrid(SIZE));
+
+test("documents adopt the dimensions of their initial grid", () => {
+  const document = new StudioDocument(createGrid(SIZE));
+
+  assert.equal(document.rows, SIZE.rows);
+  assert.equal(document.columns, SIZE.columns);
+  assert.equal(document.cells.length, SIZE.rows * SIZE.columns);
+  assert.equal(document.canUndo, false);
+  assert.equal(document.canRedo, false);
+  assert.equal(document.isPristine, true);
+  assert.throws(
+    () => new StudioDocument({ rows: 2, columns: 2, cells: [null] }),
+    /rectangle/,
+  );
+});
+
+test("copies the initial grid instead of adopting it", () => {
+  const initial = gridWith([0, 0, "#111111"]);
+  const document = new StudioDocument(initial);
+  setCell(initial, 0, 0, "#ffffff");
+
+  assert.equal(cell(document, 0, 0), "#111111");
 });
 
 test("commits an entire stroke as one undoable history entry", () => {
-  const state = reduce(
-    createStudioDocument(createGrid(SIZE)),
+  const document = apply(
+    new StudioDocument(createGrid(SIZE)),
     { type: "begin-stroke", row: 1, column: 2, color: "#111111" },
     { type: "update-stroke", row: 1, column: 3, color: "#222222" },
     { type: "commit-stroke" },
   );
 
-  assert.equal(state.grid[1][2], "#111111");
-  assert.equal(state.grid[1][3], "#222222");
-  assert.equal(state.past.length, 1);
+  assert.equal(cell(document, 1, 2), "#111111");
+  assert.equal(cell(document, 1, 3), "#222222");
+  assert.equal(document.undoDepth, 1);
+  assert.equal(document.isPristine, false);
+  const painted = gridToRows(document);
 
-  const undone = studioDocumentReducer(state, { type: "undo" });
-  assert.deepEqual(undone.grid, createGrid(SIZE));
-  assert.equal(canRedo(undone), true);
-  assert.deepEqual(
-    studioDocumentReducer(undone, { type: "redo" }).grid,
-    state.grid,
-  );
+  assert.equal(document.undo(), true);
+  assert.deepEqual(gridToRows(document), EMPTY_ROWS);
+  assert.equal(document.canRedo, true);
+  assert.equal(document.redo(), true);
+  assert.deepEqual(gridToRows(document), painted);
 });
 
 test("drops no-op strokes and restores cancelled strokes", () => {
-  const initial = createStudioDocument(gridWith([2, 2, "#abcdef"]));
-  const noOp = reduce(
-    initial,
+  const document = new StudioDocument(gridWith([2, 2, "#abcdef"]));
+  const initial = gridToRows(document);
+
+  apply(
+    document,
     { type: "begin-stroke", row: 2, column: 2, color: "#abcdef" },
     { type: "commit-stroke" },
   );
-  assert.equal(noOp.past.length, 0);
+  assert.equal(document.undoDepth, 0);
 
-  const cancelled = reduce(
-    noOp,
+  apply(
+    document,
     { type: "begin-stroke", row: 2, column: 2, color: null },
     { type: "update-stroke", row: 3, column: 2, color: "#123456" },
     { type: "cancel-stroke" },
   );
-  assert.deepEqual(cancelled.grid, initial.grid);
-  assert.equal(cancelled.past.length, 0);
+  assert.deepEqual(gridToRows(document), initial);
+  assert.equal(document.undoDepth, 0);
+  assert.equal(document.isStroking, false);
 });
 
-test("tracks changed cells without rescanning the stroke baseline", () => {
-  const initial = createStudioDocument(createGrid(SIZE));
-  const oneChanged = studioDocumentReducer(initial, {
-    type: "begin-stroke",
-    row: 3,
-    column: 5,
-    color: "#111111",
-  });
-  assert.equal(oneChanged.stroke?.changedCells, 1);
+test("a stroke that paints cells back to their color commits nothing", () => {
+  const document = new StudioDocument(createGrid(SIZE));
 
-  const twoChanged = studioDocumentReducer(oneChanged, {
-    type: "update-stroke",
-    row: 3,
-    column: 4,
-    color: "#222222",
-  });
-  assert.equal(twoChanged.stroke?.changedCells, 2);
+  document.beginStroke(3, 5, "#111111");
+  document.updateStroke(3, 4, "#222222");
+  document.updateStroke(3, 5, null);
+  document.updateStroke(3, 4, null);
+  assert.equal(document.commitStroke(), true);
 
-  const oneReverted = studioDocumentReducer(twoChanged, {
-    type: "update-stroke",
-    row: 3,
-    column: 5,
-    color: null,
-  });
-  assert.equal(oneReverted.stroke?.changedCells, 1);
+  assert.equal(document.undoDepth, 0);
+  assert.equal(document.isPristine, true);
+});
 
-  const fullyReverted = studioDocumentReducer(oneReverted, {
-    type: "update-stroke",
-    row: 3,
-    column: 4,
-    color: null,
-  });
-  assert.equal(fullyReverted.stroke?.changedCells, 0);
-  assert.equal(
-    studioDocumentReducer(fullyReverted, { type: "commit-stroke" }).past.length,
-    0,
-  );
+test("starting a stroke commits one still in flight", () => {
+  const document = new StudioDocument(createGrid(SIZE));
+
+  document.beginStroke(0, 0, "#111111");
+  document.beginStroke(0, 1, "#222222");
+  assert.equal(document.undoDepth, 1);
+  document.commitStroke();
+
+  assert.equal(document.undoDepth, 2);
+  document.undo();
+  assert.equal(cell(document, 0, 0), "#111111");
+  assert.equal(cell(document, 0, 1), null);
 });
 
 test("new edits after undo truncate the redo branch", () => {
-  const state = reduce(
-    createStudioDocument(createGrid(SIZE)),
+  const document = new StudioDocument(createGrid(SIZE));
+  apply(
+    document,
     { type: "load", grid: gridWith([0, 0, "#111111"]) },
     { type: "load", grid: gridWith([0, 1, "#222222"]) },
     { type: "undo" },
@@ -127,205 +148,234 @@ test("new edits after undo truncate the redo branch", () => {
     { type: "commit-stroke" },
   );
 
-  assert.equal(canRedo(state), false);
-  assert.equal(state.past.length, 2);
+  assert.equal(document.canRedo, false);
+  assert.equal(document.undoDepth, 2);
 });
 
 test("clear, recolor, load, and affix are atomic and undoable", () => {
-  const initial = createStudioDocument(gridWith([0, 0, "#111111"]));
-  const recolored = studioDocumentReducer(initial, {
-    type: "recolor",
-    from: "#111111",
-    to: "#333333",
-  });
-  assert.equal(recolored.grid[0][0], "#333333");
+  const document = new StudioDocument(gridWith([0, 0, "#111111"]));
 
-  const affixed = studioDocumentReducer(recolored, {
-    type: "affix",
-    grid: gridWith([1, 1, "#444444"]),
-  });
-  assert.equal(affixed.grid[0][0], "#333333");
-  assert.equal(affixed.grid[1][1], "#444444");
+  assert.equal(document.recolor("#111111", "#333333"), true);
+  assert.equal(cell(document, 0, 0), "#333333");
 
-  const cleared = studioDocumentReducer(affixed, { type: "clear" });
-  assert.deepEqual(cleared.grid, createGrid(SIZE));
-  assert.equal(cleared.past.length, 3);
-  assert.deepEqual(
-    studioDocumentReducer(cleared, { type: "undo" }).grid,
-    affixed.grid,
-  );
+  assert.equal(document.affix(gridWith([1, 1, "#444444"])), true);
+  assert.equal(cell(document, 0, 0), "#333333");
+  assert.equal(cell(document, 1, 1), "#444444");
+  const affixed = gridToRows(document);
+
+  assert.equal(document.clear(), true);
+  assert.deepEqual(gridToRows(document), EMPTY_ROWS);
+  assert.equal(document.undoDepth, 3);
+  document.undo();
+  assert.deepEqual(gridToRows(document), affixed);
 });
 
-test("avoids allocating history for no-op recolors", () => {
-  const initial = createStudioDocument(gridWith([0, 0, "#111111"]));
+test("edits that change nothing add no history", () => {
+  const document = new StudioDocument(gridWith([0, 0, "#111111"]));
+  const version = document.version;
 
-  assert.equal(
-    studioDocumentReducer(initial, {
-      type: "recolor",
-      from: "#222222",
-      to: "#333333",
-    }),
-    initial,
-  );
-  assert.equal(
-    studioDocumentReducer(initial, {
-      type: "recolor",
-      from: "#111111",
-      to: "#111111",
-    }),
-    initial,
-  );
+  assert.equal(document.recolor("#222222", "#333333"), false);
+  assert.equal(document.recolor("#111111", "#111111"), false);
+  assert.equal(document.load(gridWith([0, 0, "#111111"])), false);
+  assert.equal(document.affix(createGrid(SIZE)), false);
+  assert.equal(document.fillSelection([{ row: 0, column: 0 }], "#111111"), false);
+  assert.equal(new StudioDocument(createGrid(SIZE)).clear(), false);
+  assert.equal(document.undoDepth, 0);
+  assert.equal(document.version, version);
 });
 
-test("hydrates only pristine documents and clones incoming grids", () => {
+test("undoes and redoes edits that rewrite most of the grid", () => {
+  const document = new StudioDocument(createGrid(SIZE));
+  const full = createGrid(SIZE);
+  full.cells.fill("#111111");
+
+  document.load(full);
+  document.recolor("#111111", "#222222");
+  document.fillSelection([{ row: 0, column: 0 }], "#333333");
+  assert.equal(cell(document, 3, 5), "#222222");
+
+  document.undo();
+  document.undo();
+  assert.equal(document.cells.every((color) => color === "#111111"), true);
+  document.undo();
+  assert.deepEqual(gridToRows(document), EMPTY_ROWS);
+  document.redo();
+  document.redo();
+  document.redo();
+  assert.equal(cell(document, 0, 0), "#333333");
+  assert.equal(cell(document, 3, 5), "#222222");
+});
+
+test("hydrates only pristine documents and copies incoming grids", () => {
   const hydrationInput = gridWith([3, 3, "#111111"]);
-  const hydrated = studioDocumentReducer(
-    createStudioDocument(createGrid(SIZE)),
-    { type: "hydrate", grid: hydrationInput },
-  );
-  hydrationInput[3][3] = "#ffffff";
-  assert.equal(hydrated.grid[3][3], "#111111");
-  assert.equal(hydrated.past.length, 0);
+  const document = new StudioDocument(createGrid(SIZE));
 
-  const edited = reduce(
-    hydrated,
-    { type: "begin-stroke", row: 0, column: 0, color: "#222222" },
-    { type: "commit-stroke" },
-  );
-  assert.equal(
-    studioDocumentReducer(edited, {
-      type: "hydrate",
-      grid: gridWith([0, 1, "#999999"]),
-    }),
-    edited,
-  );
+  assert.equal(document.hydrate(hydrationInput), true);
+  setCell(hydrationInput, 3, 3, "#ffffff");
+  assert.equal(cell(document, 3, 3), "#111111");
+  assert.equal(document.undoDepth, 0);
+  assert.equal(document.isPristine, true);
+
+  document.beginStroke(0, 0, "#222222");
+  document.commitStroke();
+  assert.equal(document.hydrate(gridWith([0, 1, "#999999"])), false);
+  assert.equal(cell(document, 0, 1), null);
 });
 
 test("ignores grids whose dimensions do not match the document", () => {
-  const state = createStudioDocument(createGrid(SIZE));
+  const document = new StudioDocument(createGrid(SIZE));
   const wrongSize = createGrid({ rows: 2, columns: 2 });
-  const ragged = [[null]] as StudioGrid;
+  const ragged = { rows: SIZE.rows, columns: SIZE.columns, cells: [null] };
+  const nested = [[null]] as unknown as StudioGrid;
 
   for (const type of ["hydrate", "load", "affix"] as const) {
-    assert.equal(studioDocumentReducer(state, { type, grid: wrongSize }), state);
-    assert.equal(studioDocumentReducer(state, { type, grid: ragged }), state);
+    assert.equal(document.dispatch({ type, grid: wrongSize }), false);
+    assert.equal(document.dispatch({ type, grid: ragged }), false);
+    assert.equal(document.dispatch({ type, grid: nested }), false);
   }
-  assert.equal(
-    studioDocumentReducer(state, {
-      type: "begin-stroke",
-      row: SIZE.rows,
-      column: 0,
-      color: "#111111",
-    }),
-    state,
-  );
+  assert.equal(document.beginStroke(SIZE.rows, 0, "#111111"), false);
+  assert.equal(document.beginStroke(0, 0.5, "#111111"), false);
+  assert.equal(document.version, 0);
 });
 
 test("ignores unknown actions from untyped callers", () => {
-  const state = createStudioDocument(createGrid(SIZE));
+  const document = new StudioDocument(createGrid(SIZE));
   const action = { type: "unknown" } as unknown as StudioDocumentAction;
 
-  assert.equal(studioDocumentReducer(state, action), state);
+  assert.equal(document.dispatch(action), false);
+});
+
+test("version changes on every change and listeners hear about each one", () => {
+  const document = new StudioDocument(createGrid(SIZE));
+  let heard = 0;
+  const unsubscribe = document.subscribe(() => {
+    heard += 1;
+  });
+
+  document.beginStroke(0, 0, "#111111");
+  document.updateStroke(0, 0, "#111111"); // no change
+  document.updateStroke(0, 1, "#111111");
+  document.commitStroke();
+  assert.equal(document.version, 3);
+  assert.equal(heard, 3);
+
+  unsubscribe();
+  document.undo();
+  assert.equal(document.version, 4);
+  assert.equal(heard, 3);
+});
+
+test("row revisions change only for rows whose cells change", () => {
+  const document = new StudioDocument(createGrid(SIZE));
+  const revisions = () =>
+    Array.from({ length: SIZE.rows }, (_, row) => document.rowRevision(row));
+
+  document.beginStroke(1, 0, "#111111");
+  document.updateStroke(1, 1, "#111111");
+  document.commitStroke();
+  assert.deepEqual(revisions(), [0, 2, 0, 0]);
+
+  document.liftSelection([{ row: 1, column: 0 }]);
+  assert.deepEqual(revisions(), [0, 2, 0, 0]); // lifted in place: nothing moved
+  document.moveSelection(2, 0);
+  assert.deepEqual(revisions(), [0, 3, 0, 1]);
+  document.commitSelection();
+  assert.deepEqual(revisions(), [0, 3, 0, 1]);
+
+  document.undo();
+  assert.deepEqual(revisions(), [0, 4, 0, 2]);
+  assert.equal(document.rowRevision(99), 0);
+});
+
+test("snapshots are copies that later edits leave alone", () => {
+  const document = documentWith([0, 0, "#111111"]);
+  const snapshot = document.snapshot();
+
+  document.clear();
+  assert.equal(snapshot.cells[0], "#111111");
+  assert.equal(cell(document, 0, 0), null);
 });
 
 test("moves a lifted selection and commits it as one undo entry", () => {
-  const state = reduce(createStudioDocument(createGrid(SIZE)), {
-    type: "load",
-    grid: gridWith([1, 1, "#aaaaaa"], [1, 2, "#bbbbbb"], [2, 4, "#cccccc"]),
-  });
+  const document = documentWith(
+    [1, 1, "#aaaaaa"],
+    [1, 2, "#bbbbbb"],
+    [2, 4, "#cccccc"],
+  );
+  const depth = document.undoDepth;
 
-  const lifted = reduce(state, {
-    type: "lift-selection",
-    selection: [
+  assert.equal(
+    document.liftSelection([
       { row: 1, column: 1 },
       { row: 1, column: 2 },
-    ],
-  });
-  assert.notEqual(lifted.float, null);
+    ]),
+    true,
+  );
+  assert.notEqual(document.float, null);
   // A lift at offset zero renders in place — nothing visibly changes yet.
-  assert.equal(lifted.grid[1][1], "#aaaaaa");
-  assert.equal(lifted.grid[1][2], "#bbbbbb");
-  assert.deepEqual(getFloatingSelection(lifted), [
+  assert.equal(cell(document, 1, 1), "#aaaaaa");
+  assert.equal(cell(document, 1, 2), "#bbbbbb");
+  assert.deepEqual(document.floatingSelection(), [
     { row: 1, column: 1 },
     { row: 1, column: 2 },
   ]);
 
-  const moved = reduce(
-    lifted,
-    { type: "move-selection", rowDelta: 1, columnDelta: 1 },
-    { type: "move-selection", rowDelta: 0, columnDelta: 1 },
-  );
-  assert.deepEqual(moved.float?.offset, { row: 1, column: 2 });
-  assert.equal(moved.grid[2][3], "#aaaaaa");
-  assert.equal(moved.grid[2][4], "#bbbbbb"); // overwrote the cell underneath
-  assert.deepEqual(getFloatingSelection(moved), [
+  document.moveSelection(1, 1);
+  document.moveSelection(0, 1);
+  assert.deepEqual(document.float?.offset, { row: 1, column: 2 });
+  assert.equal(cell(document, 2, 3), "#aaaaaa");
+  assert.equal(cell(document, 2, 4), "#bbbbbb"); // overwrote the cell underneath
+  assert.deepEqual(document.floatingSelection(), [
     { row: 2, column: 3 },
     { row: 2, column: 4 },
   ]);
-  assert.equal(moved.past.length, state.past.length); // still uncommitted
+  assert.equal(document.undoDepth, depth); // still uncommitted
 
-  const committed = reduce(moved, { type: "commit-selection" });
-  assert.equal(committed.float, null);
-  assert.equal(getFloatingSelection(committed), null);
-  assert.equal(committed.past.length, state.past.length + 1);
-  assert.equal(committed.grid[1][1], null);
-  assert.equal(committed.grid[2][3], "#aaaaaa");
+  assert.equal(document.commitSelection(), true);
+  assert.equal(document.float, null);
+  assert.equal(document.floatingSelection(), null);
+  assert.equal(document.undoDepth, depth + 1);
+  assert.equal(cell(document, 1, 1), null);
+  assert.equal(cell(document, 2, 3), "#aaaaaa");
 
-  const undone = reduce(committed, { type: "undo" });
-  assert.equal(undone.grid[1][1], "#aaaaaa");
-  assert.equal(undone.grid[2][4], "#cccccc");
+  document.undo();
+  assert.equal(cell(document, 1, 1), "#aaaaaa");
+  assert.equal(cell(document, 2, 4), "#cccccc");
 });
 
 test("places a selection at an absolute offset while dragging", () => {
-  const state = reduce(createStudioDocument(createGrid(SIZE)), {
-    type: "load",
-    grid: gridWith([0, 0, "#aaaaaa"]),
-  });
-  const lifted = reduce(state, {
-    type: "lift-selection",
-    selection: [{ row: 0, column: 0 }],
-  });
+  const document = documentWith([0, 0, "#aaaaaa"]);
+  document.liftSelection([{ row: 0, column: 0 }]);
 
-  const placed = reduce(lifted, {
-    type: "place-selection",
-    rowOffset: 2,
-    columnOffset: 3,
-  });
-  assert.equal(placed.grid[2][3], "#aaaaaa");
-  assert.equal(
-    studioDocumentReducer(placed, {
-      type: "place-selection",
-      rowOffset: 2,
-      columnOffset: 3,
-    }),
-    placed,
-  );
-  assert.equal(
-    studioDocumentReducer(placed, {
-      type: "place-selection",
-      rowOffset: 0.5,
-      columnOffset: 0,
-    }),
-    placed,
-  );
-  assert.equal(
-    studioDocumentReducer(placed, {
-      type: "move-selection",
-      rowDelta: Number.NaN,
-      columnDelta: 0,
-    }),
-    placed,
-  );
+  assert.equal(document.placeSelection(2, 3), true);
+  assert.equal(cell(document, 2, 3), "#aaaaaa");
+  assert.equal(document.placeSelection(2, 3), false);
+  assert.equal(document.placeSelection(0.5, 0), false);
+  assert.equal(document.moveSelection(Number.NaN, 0), false);
+});
+
+test("drags a selection back across cells it passed over", () => {
+  const document = documentWith([0, 0, "#aaaaaa"], [0, 3, "#cccccc"]);
+  document.liftSelection([{ row: 0, column: 0 }]);
+
+  for (let step = 0; step < 4; step += 1) document.moveSelection(0, 1);
+  assert.equal(cell(document, 0, 3), "#cccccc"); // passed over and restored
+  assert.equal(cell(document, 0, 4), "#aaaaaa");
+  for (let step = 0; step < 4; step += 1) document.moveSelection(0, -1);
+  assert.deepEqual(gridToRows(document), gridToRows(gridWith([0, 0, "#aaaaaa"], [0, 3, "#cccccc"])));
+
+  // Back where it started: committing adds no history.
+  const depth = document.undoDepth;
+  assert.equal(document.commitSelection(), true);
+  assert.equal(document.undoDepth, depth);
 });
 
 test("deletes the cells a selection carries off the canvas", () => {
-  const state = reduce(createStudioDocument(createGrid(SIZE)), {
-    type: "load",
-    grid: gridWith([0, 0, "#aaaaaa"], [0, 1, "#bbbbbb"]),
-  });
+  const document = documentWith([0, 0, "#aaaaaa"], [0, 1, "#bbbbbb"]);
+  const depth = document.undoDepth;
 
-  const committed = reduce(
-    state,
+  apply(
+    document,
     {
       type: "lift-selection",
       selection: [
@@ -337,237 +387,147 @@ test("deletes the cells a selection carries off the canvas", () => {
     { type: "commit-selection" },
   );
 
-  assert.equal(committed.grid[0][0], "#bbbbbb");
-  assert.equal(committed.grid[0][1], null);
-  assert.equal(committed.past.length, state.past.length + 1);
+  assert.equal(cell(document, 0, 0), "#bbbbbb");
+  assert.equal(cell(document, 0, 1), null);
+  assert.equal(document.undoDepth, depth + 1);
 });
 
 test("cancels a floating selection back to its baseline", () => {
-  const state = reduce(createStudioDocument(createGrid(SIZE)), {
-    type: "load",
-    grid: gridWith([1, 1, "#aaaaaa"]),
-  });
-
   for (const action of [
     { type: "cancel-selection" },
     { type: "undo" },
     { type: "redo" },
   ] as const) {
-    const cancelled = reduce(
-      state,
-      {
-        type: "lift-selection",
-        selection: [{ row: 1, column: 1 }],
-      },
+    const document = documentWith([1, 1, "#aaaaaa"]);
+    const depth = document.undoDepth;
+    apply(
+      document,
+      { type: "lift-selection", selection: [{ row: 1, column: 1 }] },
       { type: "move-selection", rowDelta: 2, columnDelta: 0 },
       action,
     );
 
-    assert.equal(cancelled.float, null);
-    assert.equal(cancelled.grid[1][1], "#aaaaaa");
-    assert.equal(cancelled.grid[3][1], null);
-    assert.equal(cancelled.past.length, state.past.length);
-    assert.equal(cancelled.future.length, 0);
+    assert.equal(document.float, null);
+    assert.equal(cell(document, 1, 1), "#aaaaaa");
+    assert.equal(cell(document, 3, 1), null);
+    assert.equal(document.undoDepth, depth);
+    assert.equal(document.redoDepth, 0);
   }
 });
 
 test("keeps history clean when a lifted selection never moves", () => {
-  const state = reduce(createStudioDocument(createGrid(SIZE)), {
-    type: "load",
-    grid: gridWith([1, 1, "#aaaaaa"]),
-  });
+  const document = documentWith([1, 1, "#aaaaaa"]);
+  const depth = document.undoDepth;
 
-  const committed = reduce(
-    state,
-    { type: "lift-selection", selection: [{ row: 1, column: 1 }] },
-    { type: "commit-selection" },
-  );
+  assert.equal(document.commitSelection(), false);
+  assert.equal(document.cancelSelection(), false);
+  document.liftSelection([{ row: 1, column: 1 }]);
+  assert.equal(document.commitSelection(), true);
 
-  assert.equal(committed.float, null);
-  assert.equal(committed.past.length, state.past.length);
-  assert.equal(committed.grid[1][1], "#aaaaaa");
-  assert.equal(studioDocumentReducer(state, { type: "commit-selection" }), state);
-  assert.equal(studioDocumentReducer(state, { type: "cancel-selection" }), state);
+  assert.equal(document.float, null);
+  assert.equal(document.undoDepth, depth);
+  assert.equal(cell(document, 1, 1), "#aaaaaa");
 });
 
 test("ignores empty lifts and refuses to lift twice", () => {
-  const state = reduce(createStudioDocument(createGrid(SIZE)), {
-    type: "load",
-    grid: gridWith([1, 1, "#aaaaaa"]),
-  });
+  const document = documentWith([1, 1, "#aaaaaa"]);
 
-  assert.equal(
-    studioDocumentReducer(state, { type: "lift-selection", selection: [] }),
-    state,
-  );
-  assert.equal(
-    studioDocumentReducer(state, {
-      type: "lift-selection",
-      selection: [{ row: 9, column: 9 }],
-    }),
-    state,
-  );
-
-  const lifted = reduce(state, {
-    type: "lift-selection",
-    selection: [{ row: 1, column: 1 }],
-  });
-  assert.equal(
-    studioDocumentReducer(lifted, {
-      type: "lift-selection",
-      selection: [{ row: 0, column: 0 }],
-    }),
-    lifted,
-  );
+  assert.equal(document.liftSelection([]), false);
+  assert.equal(document.liftSelection([{ row: 9, column: 9 }]), false);
+  assert.equal(document.liftSelection([{ row: 1, column: 1 }]), true);
+  assert.equal(document.liftSelection([{ row: 0, column: 0 }]), false);
 });
 
 test("lifting cancels an in-flight stroke and strokes wait for the float", () => {
-  const state = createStudioDocument(createGrid(SIZE));
-  const drafting = reduce(state, {
-    type: "begin-stroke",
-    row: 0,
-    column: 0,
-    color: "#aaaaaa",
-  });
+  const document = new StudioDocument(createGrid(SIZE));
+  document.beginStroke(0, 0, "#aaaaaa");
 
-  const lifted = reduce(drafting, {
-    type: "lift-selection",
-    selection: [{ row: 2, column: 2 }],
-  });
-  assert.equal(lifted.stroke, null);
-  assert.equal(lifted.grid[0][0], null);
-
-  assert.equal(
-    studioDocumentReducer(lifted, {
-      type: "begin-stroke",
-      row: 3,
-      column: 3,
-      color: "#bbbbbb",
-    }),
-    lifted,
-  );
+  document.liftSelection([{ row: 2, column: 2 }]);
+  assert.equal(document.isStroking, false);
+  assert.equal(cell(document, 0, 0), null);
+  assert.equal(document.beginStroke(3, 3, "#bbbbbb"), false);
 });
 
 test("atomic edits drop a floating selection at its current position", () => {
-  const state = reduce(createStudioDocument(createGrid(SIZE)), {
-    type: "load",
-    grid: gridWith([1, 1, "#aaaaaa"]),
-  });
-  const moved = reduce(
-    state,
-    { type: "lift-selection", selection: [{ row: 1, column: 1 }] },
-    { type: "move-selection", rowDelta: 1, columnDelta: 0 },
-  );
+  const document = documentWith([1, 1, "#aaaaaa"]);
+  document.liftSelection([{ row: 1, column: 1 }]);
+  document.moveSelection(1, 0);
 
-  const cleared = reduce(moved, { type: "clear" });
-  assert.equal(cleared.float, null);
-  assert.equal(cleared.past.at(-1)?.[1][1], "#aaaaaa"); // undoes to pre-lift
-  assert.equal(cleared.grid[2][1], null);
+  document.clear();
+  assert.equal(document.float, null);
+  assert.equal(cell(document, 2, 1), null);
+  document.undo(); // undoes to the pre-lift grid
+  assert.equal(cell(document, 1, 1), "#aaaaaa");
+  assert.equal(cell(document, 2, 1), null);
 
-  const hydrated = studioDocumentReducer(
-    reduce(createStudioDocument(createGrid(SIZE)), {
-      type: "lift-selection",
-      selection: [{ row: 0, column: 0 }],
-    }),
-    { type: "hydrate", grid: gridWith([0, 0, "#bbbbbb"]) },
-  );
-  assert.equal(hydrated.grid[0][0], null);
+  const pristine = new StudioDocument(createGrid(SIZE));
+  pristine.liftSelection([{ row: 0, column: 0 }]);
+  assert.equal(pristine.hydrate(gridWith([0, 0, "#bbbbbb"])), false);
+  assert.equal(cell(pristine, 0, 0), null);
 });
 
 test("lifts on the first nudge so arrow keys work without a drag", () => {
-  const state = reduce(createStudioDocument(createGrid(SIZE)), {
-    type: "load",
-    grid: gridWith([1, 1, "#aaaaaa"]),
-  });
+  const document = documentWith([1, 1, "#aaaaaa"]);
   const selection = [{ row: 1, column: 1 }];
 
-  const nudged = reduce(
-    state,
-    { type: "move-selection", rowDelta: 1, columnDelta: 0, selection },
-    { type: "move-selection", rowDelta: 1, columnDelta: 0, selection },
-  );
+  assert.equal(document.moveSelection(1, 0), false);
+  document.moveSelection(1, 0, selection);
+  document.moveSelection(1, 0, selection);
 
-  assert.deepEqual(nudged.float?.offset, { row: 2, column: 0 });
-  assert.deepEqual(nudged.float?.contents, [
+  assert.deepEqual(document.float?.offset, { row: 2, column: 0 });
+  assert.deepEqual(document.float?.contents, [
     { row: 1, column: 1, color: "#aaaaaa" },
   ]);
-  assert.equal(nudged.grid[3][1], "#aaaaaa");
-  assert.equal(nudged.grid[1][1], null);
-  assert.equal(
-    studioDocumentReducer(state, { type: "move-selection", rowDelta: 1, columnDelta: 0 }),
-    state,
-  );
+  assert.equal(cell(document, 3, 1), "#aaaaaa");
+  assert.equal(cell(document, 1, 1), null);
 });
 
 test("recolors a selection as one undoable edit", () => {
-  const state = reduce(createStudioDocument(createGrid(SIZE)), {
-    type: "load",
-    grid: gridWith([1, 1, "#aaaaaa"], [1, 2, "#bbbbbb"], [2, 2, "#cccccc"]),
-  });
+  const document = documentWith(
+    [1, 1, "#aaaaaa"],
+    [1, 2, "#bbbbbb"],
+    [2, 2, "#cccccc"],
+  );
+  const before = gridToRows(document);
+  const depth = document.undoDepth;
   const selection = [
     { row: 1, column: 1 },
     { row: 1, column: 2 },
   ];
 
-  const filled = reduce(state, {
-    type: "fill-selection",
-    selection,
-    color: "#dddddd",
-  });
-  assert.equal(filled.grid[1][1], "#dddddd");
-  assert.equal(filled.grid[1][2], "#dddddd");
-  assert.equal(filled.grid[2][2], "#cccccc");
-  assert.equal(filled.past.length, state.past.length + 1);
-  assert.deepEqual(
-    studioDocumentReducer(filled, { type: "undo" }).grid,
-    state.grid,
-  );
+  assert.equal(document.fillSelection(selection, "#dddddd"), true);
+  assert.equal(cell(document, 1, 1), "#dddddd");
+  assert.equal(cell(document, 1, 2), "#dddddd");
+  assert.equal(cell(document, 2, 2), "#cccccc");
+  assert.equal(document.undoDepth, depth + 1);
 
-  // Filling with the color already there is not an edit.
-  assert.equal(
-    studioDocumentReducer(filled, {
-      type: "fill-selection",
-      selection,
-      color: "#dddddd",
-    }),
-    filled,
-  );
-  // Nor is filling nothing.
-  assert.equal(
-    studioDocumentReducer(filled, {
-      type: "fill-selection",
-      selection: [],
-      color: "#eeeeee",
-    }),
-    filled,
-  );
+  // Filling with the color already there is not an edit, nor is filling nothing.
+  assert.equal(document.fillSelection(selection, "#dddddd"), false);
+  assert.equal(document.fillSelection([], "#eeeeee"), false);
+
+  document.undo();
+  assert.deepEqual(gridToRows(document), before);
 });
 
 test("recolors a floating selection without ending the move", () => {
-  const state = reduce(createStudioDocument(createGrid(SIZE)), {
-    type: "load",
-    grid: gridWith([1, 1, "#aaaaaa"]),
-  });
+  const document = documentWith([1, 1, "#aaaaaa"]);
+  const before = gridToRows(document);
+  const depth = document.undoDepth;
   const selection = [{ row: 1, column: 1 }];
 
-  const floating = reduce(
-    state,
-    { type: "lift-selection", selection },
-    { type: "move-selection", rowDelta: 1, columnDelta: 1 },
-    { type: "fill-selection", selection, color: "#dddddd" },
-  );
+  document.liftSelection(selection);
+  document.moveSelection(1, 1);
+  document.fillSelection(selection, "#dddddd");
 
   // Still in flight, in the new color, and no history entry of its own.
-  assert.notEqual(floating.float, null);
-  assert.equal(floating.grid[2][2], "#dddddd");
-  assert.equal(floating.grid[1][1], null);
-  assert.equal(floating.past.length, state.past.length);
+  assert.notEqual(document.float, null);
+  assert.equal(cell(document, 2, 2), "#dddddd");
+  assert.equal(cell(document, 1, 1), null);
+  assert.equal(document.undoDepth, depth);
 
-  const committed = reduce(floating, { type: "commit-selection" });
-  assert.equal(committed.grid[2][2], "#dddddd");
-  assert.equal(committed.past.length, state.past.length + 1);
-  assert.deepEqual(
-    studioDocumentReducer(committed, { type: "undo" }).grid,
-    state.grid,
-  );
+  document.commitSelection();
+  assert.equal(cell(document, 2, 2), "#dddddd");
+  assert.equal(document.undoDepth, depth + 1);
+  document.undo();
+  assert.deepEqual(gridToRows(document), before);
 });

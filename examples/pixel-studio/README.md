@@ -39,7 +39,7 @@ Use `npm start` on its own when `dist/` is already built.
 
 Selected cells scale up slightly, and the marquee traces only the *exterior* edges of the shape — contiguous cells share no seam, while diagonal or detached cells each get their own ring. A move overwrites the cells it lands on, and anything pushed past the canvas edge is deleted (the sidebar counts them before it lands).
 
-Empty cells can't be selected — that rule is the app's, not the library's: `beginSelect` and `extendSelect` check `state.grid[row][column] !== null`.
+Empty cells can't be selected — that rule is the app's, not the library's: `beginSelect` and `extendSelect` check `studio.getCell(row, column) !== null`.
 
 ## What to read
 
