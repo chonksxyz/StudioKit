@@ -354,6 +354,8 @@ Because `bindStudioInput` takes injected `windowTarget`/`documentTarget` and the
 
 Nested grids saved by 0.2 convert with `gridFromRows`; `gridToRows` goes the other way.
 
+See [CHANGELOG.md](CHANGELOG.md) for every breaking change.
+
 ## License
 
 [MIT](LICENSE)

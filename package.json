@@ -29,6 +29,7 @@
     "src",
     "docs",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
